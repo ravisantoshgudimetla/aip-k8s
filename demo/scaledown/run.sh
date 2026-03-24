@@ -77,12 +77,21 @@ if [[ "${AGENT:-go}" == "claude" ]]; then
     echo "  ✗ ANTHROPIC_API_KEY not set — required for Claude agent"
     exit 1
   fi
-  echo "  Using Claude-powered agent (claude-sonnet-4-6)"
+  echo "  Using Python Claude-powered agent (claude-sonnet-4-6)"
   pip install -q -r "${DEMO_DIR}/claude-agent/requirements.txt"
   python3 "${DEMO_DIR}/claude-agent/agent.py" \
     --gateway "${GATEWAY_URL}" \
     --dashboard "${DASHBOARD_URL}" \
     --namespace "${NAMESPACE}"
+elif [[ "${AGENT:-go}" == "claude-go" ]]; then
+  if [[ -z "${AWS_ACCESS_KEY_ID:-}" ]] && [[ -z "${AWS_PROFILE:-}" ]]; then
+    echo "  ⚠ AWS_ACCESS_KEY_ID or AWS_PROFILE not set — relying on default AWS credential chain"
+  fi
+  echo "  Using Golang Claude-powered agent (Amazon Bedrock)"
+  (cd "${DEMO_DIR}/claude-agent-go" && go run main.go tools.go \
+    --gateway "${GATEWAY_URL}" \
+    --dashboard "${DASHBOARD_URL}" \
+    --namespace "${NAMESPACE}")
 else
   go run "${DEMO_DIR}/agent/main.go" \
     --gateway "${GATEWAY_URL}" \
