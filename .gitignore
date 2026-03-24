@@ -49,3 +49,5 @@ go.work
 dashboard
 demo.tape
 demo/*.gif
+demo/scaledown/claude-agent-go/claude-agent
+demo/scaledown/claude-agent-go/claude-agent-go
