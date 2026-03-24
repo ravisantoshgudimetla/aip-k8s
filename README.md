@@ -1,7 +1,7 @@
 # Agent Intent Protocol (AIP) Kubernetes Control Plane
 
 ## Description
-`aip-k8s` is a Kubernetes-native Control Plane implementation of the [Agent Intent Protocol (AIP)](https://aip.io).
+`aip-k8s` is a Kubernetes-native Control Plane implementation of the [Agent Intent Protocol (AIP)](https://github.com/ravisantoshgudimetla/agent-intent-protocol).
 
 AIP is an open standard designed to govern autonomous AI agents interacting with critical infrastructure. By requiring agents to declare their intents as cryptographic `AgentRequests` *before* action, this control plane provides strict mutual exclusion (via locking), policy-based governance (via CEL rules), and irrefutable audit trails (via immutable `AuditRecords`).
 
