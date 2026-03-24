@@ -32,6 +32,93 @@ Traditional "black-box" AI agents can fail catastrophically when interacting wit
 | [`demo/opslock`](demo/opslock/) | Two concurrent agents attempt conflicting operations on the same resource. OpsLock mutual exclusion ensures only one proceeds; the other receives `LOCK_CONTENTION`. |
 | [`demo/kiro`](demo/kiro/) | An autonomous deployment agent is blocked by a `RequireApproval` policy on production targets, triggering the human-in-the-loop escalation path with a full audit trail. |
 
+### The Scenario in 60 Seconds
+
+```
+╔══════════════════════════════════════════════════════════════════════════════╗
+║         IDLE RESOURCE REAPER  ·  Powered by Claude  ·  Governed by AIP      ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+  ┌─ DATADOG  (data is 6 hours stale) ─────────────────────────────────────┐
+  │                                                                         │
+  │   service: payment-api                namespace: default                │
+  │                                                                         │
+  │   requests/min ........... 0    ◄── no traffic detected                │
+  │   active_connections ...... 0    ◄── no active connections              │
+  │   cpu_millicores ......... 12    ◄── minimal usage                     │
+  │   cost/day ............. $32    ◄── wasted spend                       │
+  │                                                                         │
+  │   classification: [ IDLE ]   confidence: 94%                           │
+  │   recommendation: DELETE — no traffic detected, safe to remove         │
+  └─────────────────────────────────────────────────────────────────────────┘
+              │
+              │  metrics fed to agent
+              ▼
+  ┌─ IDLE-RESOURCE-REAPER (Claude) ────────────────────────────────────────┐
+  │                                                                         │
+  │  THOUGHT: metrics confirm idle. 0 requests, 0 connections, $32/day.    │
+  │           deletion criteria met. confidence: 0.94.                     │
+  │                                                                         │
+  │  ACTION:  DELETE k8s://prod/default/deployment/payment-api             │
+  └─────────────────────────────────────────────────────────────────────────┘
+              │
+              │  must declare intent before kubectl runs
+              ▼
+  ┌─ AIP CONTROL PLANE ─────────────────────────────────────────────────────┐
+  │                                                                          │
+  │  agent declared:  DELETE  payment-api   confidence: 0.94               │
+  │                                                                          │
+  │  fetching live cluster state independently...                           │
+  │                                                                          │
+  │  ┌─ LIVE STATE (not from agent) ──────────────────────────────────┐    │
+  │  │   payment-api                                                   │    │
+  │  │   ready_replicas ......... 3   ◄── service is live             │    │
+  │  │   active_endpoints ....... 3   ◄── traffic is flowing          │    │
+  │  │   has_active_endpoints: true                                    │    │
+  │  └─────────────────────────────────────────────────────────────────┘   │
+  │                                                                          │
+  │  policy: live-traffic-guard                                             │
+  │  rule:   delete + active_endpoints → DENY                              │
+  │                                                                          │
+  │  ✗  DENIED — agent data contradicts live cluster state                 │
+  └──────────────────────────────────────────────────────────────────────────┘
+              │
+              │  denial + live state returned to agent
+              ▼
+  ┌─ AGENT OBSERVES ───────────────────────────────────────────────────────┐
+  │                                                                         │
+  │  "my metrics said IDLE. control plane shows 3 live endpoints.          │
+  │   my data was stale. escalating to human review."                      │
+  │                                                                         │
+  │  ACTION: escalate → human dashboard                                    │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+
+  WITHOUT AIP                             WITH AIP
+  ──────────────────────────────────      ──────────────────────────────────
+  agent reads stale Datadog metrics       agent reads stale Datadog metrics
+            │                                         │
+            ▼                                         ▼
+  kubectl delete payment-api              aip_declare_intent (no kubectl yet)
+            │                                         │
+            ▼                                         ▼
+  deployment gone                         control plane checks live state
+            │                                         │
+            ▼                                         ▼
+  payment service: DOWN                   ready_replicas: 3 → DENIED
+            │                                         │
+            ▼                                         ▼
+  on-call paged at 2am                    agent escalates to human
+            │                                         │
+            ▼                                         ▼
+  hours to recover                        production: PROTECTED
+
+  ──────────────────────────────────────────────────────────────────────────
+  The agent was confident. The agent was wrong.
+  AIP caught what the agent could not see.
+  ──────────────────────────────────────────────────────────────────────────
+```
+
 ### Running the scaledown demo
 
 ```sh

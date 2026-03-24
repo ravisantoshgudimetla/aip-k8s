@@ -47,3 +47,5 @@ go.work
 # Kubeconfig might contain secrets
 *.kubeconfig
 dashboard
+demo.tape
+demo/*.gif
