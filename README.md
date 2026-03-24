@@ -32,6 +32,10 @@ Traditional "black-box" AI agents can fail catastrophically when interacting wit
 | [`demo/opslock`](demo/opslock/) | Two concurrent agents attempt conflicting operations on the same resource. OpsLock mutual exclusion ensures only one proceeds; the other receives `LOCK_CONTENTION`. |
 | [`demo/kiro`](demo/kiro/) | An autonomous deployment agent is blocked by a `RequireApproval` policy on production targets, triggering the human-in-the-loop escalation path with a full audit trail. |
 
+### The Scenario in 60 Seconds
+
+![AIP scaledown demo](demo/scaledown/demo.gif)
+
 ### Running the scaledown demo
 
 ```sh

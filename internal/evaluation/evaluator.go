@@ -12,7 +12,7 @@ const failModeClosed = "FailClosed"
 // targetCtx holds live cluster state fetched by the control plane — it is
 // available as the `target` variable in CEL expressions.
 type Evaluator interface {
-	Evaluate(ctx context.Context, req *aipv1alpha1.AgentRequest, policies []aipv1alpha1.SafetyPolicy, targetCtx *TargetContext) (*Result, error)
+	Evaluate(ctx context.Context, req *aipv1alpha1.AgentRequest, policies []aipv1alpha1.SafetyPolicy, targetCtx *TargetContext, cascadeCtxs map[string]*TargetContext) (*Result, error)
 }
 
 // Result is the deterministic outcome of evaluating policies
@@ -50,7 +50,7 @@ func NewEvaluator() (Evaluator, error) {
 // Evaluate applies strict conflict resolution precedence and FailureMode semantics.
 // targetCtx is injected as the `target` CEL variable — live cluster state the
 // control plane fetched independently of the agent.
-func (e *defaultEvaluator) Evaluate(ctx context.Context, req *aipv1alpha1.AgentRequest, policies []aipv1alpha1.SafetyPolicy, targetCtx *TargetContext) (*Result, error) {
+func (e *defaultEvaluator) Evaluate(ctx context.Context, req *aipv1alpha1.AgentRequest, policies []aipv1alpha1.SafetyPolicy, targetCtx *TargetContext, cascadeCtxs map[string]*TargetContext) (*Result, error) {
 	result := &Result{
 		Action:        aipv1alpha1.ResultAllow, // Default action if no rules apply
 		PolicyResults: []aipv1alpha1.PolicyResult{},
@@ -143,7 +143,7 @@ func (e *defaultEvaluator) Evaluate(ctx context.Context, req *aipv1alpha1.AgentR
 		}
 	}
 
-	_, denialCode, finalMessage = e.evaluateCascade(req, policies, result, highestPriority, denialCode, finalMessage)
+	_, denialCode, finalMessage = e.evaluateCascade(req, policies, result, highestPriority, denialCode, finalMessage, cascadeCtxs)
 
 	if result.Action == aipv1alpha1.ResultDeny {
 		result.Code = denialCode
@@ -157,8 +157,13 @@ func (e *defaultEvaluator) Evaluate(ctx context.Context, req *aipv1alpha1.AgentR
 	return result, nil
 }
 
-func (e *defaultEvaluator) evaluateCascade(req *aipv1alpha1.AgentRequest, policies []aipv1alpha1.SafetyPolicy, result *Result, highestPriority int, denialCode, finalMessage string) (int, string, string) {
+func (e *defaultEvaluator) evaluateCascade(req *aipv1alpha1.AgentRequest, policies []aipv1alpha1.SafetyPolicy, result *Result, highestPriority int, denialCode, finalMessage string, cascadeCtxs map[string]*TargetContext) (int, string, string) {
 	if req.Spec.CascadeModel == nil || len(req.Spec.CascadeModel.AffectedTargets) == 0 {
+		return highestPriority, denialCode, finalMessage
+	}
+	// Escalate means the agent is handing off to a human — cascade safety rules
+	// must not override RequireApproval with a Deny and block the human review path.
+	if req.Spec.Action == "escalate" {
 		return highestPriority, denialCode, finalMessage
 	}
 	for _, affectedTarget := range req.Spec.CascadeModel.AffectedTargets {
@@ -174,6 +179,12 @@ func (e *defaultEvaluator) evaluateCascade(req *aipv1alpha1.AgentRequest, polici
 					},
 				},
 			},
+		}
+		if ctx, ok := cascadeCtxs[affectedTarget.URI]; ok {
+			cascadeVars["target"] = ctx.AsMap()
+		} else {
+			// Fallback to empty target state if not fetched
+			cascadeVars["target"] = (&TargetContext{}).AsMap()
 		}
 
 		for _, policy := range policies {

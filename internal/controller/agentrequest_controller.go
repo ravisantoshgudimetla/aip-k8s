@@ -69,7 +69,7 @@ func (r *AgentRequestReconciler) now() time.Time {
 // +kubebuilder:rbac:groups=governance.aip.io,resources=auditrecords,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=governance.aip.io,resources=auditrecords/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=endpoints,verbs=get;list;watch
+// +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 
 func (r *AgentRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 
@@ -326,9 +326,7 @@ func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, agentReq 
 		}
 	}
 
-	// Fetch live cluster state for the target URI. The control plane owns this
-	// data — agents cannot influence it. It is injected as `target` in CEL.
-	targetCtx, err := r.fetchTargetContext(ctx, agentReq)
+	targetCtx, cascadeCtxs, err := r.fetchTargetContext(ctx, agentReq)
 	if err != nil {
 		logger.Error(err, "Failed to fetch target context, proceeding with empty context")
 	}
@@ -347,7 +345,7 @@ func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, agentReq 
 		}
 	}
 
-	result, err := r.Evaluator.Evaluate(ctx, agentReq, evalOpts, targetCtx)
+	result, err := r.Evaluator.Evaluate(ctx, agentReq, evalOpts, targetCtx, cascadeCtxs)
 	if err != nil {
 		logger.Error(err, "Evaluation failed")
 		return ctrl.Result{}, err
@@ -684,15 +682,17 @@ func (r *AgentRequestReconciler) emitAuditRecord(ctx context.Context, req *gover
 // the cluster. Only targets that actually exist and are live are reported in
 // DownstreamServices — the control plane does not trust the agent's declarations,
 // it verifies them.
-func (r *AgentRequestReconciler) fetchTargetContext(ctx context.Context, agentReq *governancev1alpha1.AgentRequest) (*evaluation.TargetContext, error) {
+func (r *AgentRequestReconciler) fetchTargetContext(ctx context.Context, agentReq *governancev1alpha1.AgentRequest) (*evaluation.TargetContext, map[string]*evaluation.TargetContext, error) {
 	if r.TargetContextFetcher == nil {
-		return &evaluation.TargetContext{}, nil
+		return &evaluation.TargetContext{}, nil, nil
 	}
 
 	targetCtx, err := r.TargetContextFetcher.Fetch(ctx, agentReq.Spec.Target.URI, agentReq.Namespace)
 	if err != nil {
-		return targetCtx, err
+		return targetCtx, nil, err
 	}
+
+	cascadeCtxs := make(map[string]*evaluation.TargetContext)
 
 	// Verify each target declared in the agent's cascade model against live
 	// cluster state. We populate DownstreamServices with names that actually
@@ -704,6 +704,8 @@ func (r *AgentRequestReconciler) fetchTargetContext(ctx context.Context, agentRe
 			if err != nil || cascadeCtx == nil || !cascadeCtx.Exists {
 				continue
 			}
+			cascadeCtxs[affected.URI] = cascadeCtx
+
 			parsed := evaluation.ParseTargetURI(affected.URI)
 			name := parsed.Name
 			if name == "" {
@@ -713,7 +715,7 @@ func (r *AgentRequestReconciler) fetchTargetContext(ctx context.Context, agentRe
 		}
 	}
 
-	return targetCtx, nil
+	return targetCtx, cascadeCtxs, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

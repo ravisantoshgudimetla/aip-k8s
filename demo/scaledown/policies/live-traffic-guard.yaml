@@ -5,19 +5,19 @@ metadata:
   namespace: default
 spec:
   targetSelector:
-    matchActions: ["delete", "scale", "scale-down", "escalate"]
+    matchActions: ["delete", "deleted", "scale", "scale-down", "escalate"]
 
   rules:
     # Deny autonomous deletion of any resource with active endpoints.
     # The agent cannot unilaterally delete a live service — this is terminal.
     # If the agent genuinely believes deletion is warranted, it must escalate
     # (action: escalate) so a human can review the contradicting evidence.
-    - name: delete-with-active-endpoints
+    - name: delete-with-live-signals
       type: StateEvaluation
       action: Deny
       expression: >
-        request.spec.action == "delete" &&
-        target.hasActiveEndpoints == true
+        (request.spec.action == "delete" || request.spec.action == "deleted") &&
+        (target.hasActiveEndpoints == true || target.readyReplicas > 0)
 
     # Deny autonomous scale-to-zero on a resource with ready replicas.
     # Scaling to 0 is operationally equivalent to deletion for a live service.
