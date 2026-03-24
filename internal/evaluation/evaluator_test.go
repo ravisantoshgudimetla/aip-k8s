@@ -199,7 +199,7 @@ func TestEvaluator(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			res, err := eval.Evaluate(context.Background(), tc.req, tc.policies, nil)
+			res, err := eval.Evaluate(context.Background(), tc.req, tc.policies, nil, nil)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}

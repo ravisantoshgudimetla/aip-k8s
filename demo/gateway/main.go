@@ -256,10 +256,11 @@ func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request
 			if phase == v1alpha1.PhaseApproved || phase == v1alpha1.PhaseDenied ||
 				phase == v1alpha1.PhaseCompleted || phase == v1alpha1.PhaseFailed {
 				writeJSON(w, http.StatusCreated, map[string]any{
-					"name":       current.Name,
-					"phase":      current.Status.Phase,
-					"denial":     current.Status.Denial,
-					"conditions": current.Status.Conditions,
+					"name":                     current.Name,
+					"phase":                    current.Status.Phase,
+					"denial":                   current.Status.Denial,
+					"conditions":               current.Status.Conditions,
+					"controlPlaneVerification": current.Status.ControlPlaneVerification,
 				})
 				return
 			}
@@ -269,9 +270,10 @@ func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request
 			if phase == v1alpha1.PhasePending &&
 				meta.IsStatusConditionTrue(current.Status.Conditions, v1alpha1.ConditionRequiresApproval) {
 				writeJSON(w, http.StatusCreated, map[string]any{
-					"name":       current.Name,
-					"phase":      current.Status.Phase,
-					"conditions": current.Status.Conditions,
+					"name":                     current.Name,
+					"phase":                    current.Status.Phase,
+					"conditions":               current.Status.Conditions,
+					"controlPlaneVerification": current.Status.ControlPlaneVerification,
 				})
 				return
 			}
@@ -306,11 +308,12 @@ func (s *Server) handleGetAgentRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"name":        current.Name,
-		"phase":       current.Status.Phase,
-		"denial":      current.Status.Denial,
-		"conditions":  current.Status.Conditions,
-		"auditEvents": auditEvents,
+		"name":                     current.Name,
+		"phase":                    current.Status.Phase,
+		"denial":                   current.Status.Denial,
+		"conditions":               current.Status.Conditions,
+		"controlPlaneVerification": current.Status.ControlPlaneVerification,
+		"auditEvents":              auditEvents,
 	})
 }
 
