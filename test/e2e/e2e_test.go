@@ -311,9 +311,21 @@ var _ = Describe("Manager", Ordered, func() {
 			}`
 		)
 
+		BeforeAll(func() {
+			By("cleaning up any stale OpsLock leases from previous runs")
+			cmd := exec.Command("kubectl", "delete", "leases", "-n", reqNS,
+				"-l", "governance.aip.io/managed-by=aip-controller", "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+		})
+
 		AfterAll(func() {
 			By("cleaning up AgentRequest and its AuditRecords")
 			cmd := exec.Command("kubectl", "delete", "agentrequest", reqName, "-n", reqNS, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+
+			By("cleaning up OpsLock leases")
+			cmd = exec.Command("kubectl", "delete", "leases", "-n", reqNS,
+				"-l", "governance.aip.io/managed-by=aip-controller", "--ignore-not-found")
 			_, _ = utils.Run(cmd)
 		})
 
