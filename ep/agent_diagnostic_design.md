@@ -30,7 +30,7 @@ A new Kind in the `governance.aip.io/v1alpha1` API group. Agent-written directly
 
 **No controller.** The Kubernetes API server validates the schema and enforces RBAC. The agent writes the record once and it is done. The aip-k8s controller never reconciles `AgentDiagnostic` objects.
 
-**Immutable after creation.** Enforced via a CEL validation rule (`self == oldSelf`). Diagnostic records are evidence — they must not be retroactively altered.
+**Immutable after creation — spec and correlation labels.** Enforced via CEL validation rules. `spec` is fully immutable. The `aip.io/correlationID` label is separately locked because it is the primary evidence link between `AgentDiagnostic` and `AgentRequest` — allowing it to be silently rewritten after creation would allow decoupling of evidence without touching `spec`. Both rules are required; `self == oldSelf` alone only covers `spec`.
 
 **`metadata.creationTimestamp` is the authoritative timestamp.** Set by the API server on write, cannot be faked by the agent.
 
@@ -61,6 +61,7 @@ type AgentDiagnosticSpec struct {
 
     // Summary is a human-readable description of what the agent observed.
     // Required. Consumed by dashboards and audit tooling.
+    // +kubebuilder:validation:MaxLength=1024
     Summary string `json:"summary"`
 
     // Details contains agent-specific diagnostic data in open JSON.
@@ -83,12 +84,26 @@ type AgentDiagnostic struct {
 }
 ```
 
-### Immutability (CRD validation rule)
+### Immutability (CRD validation rules)
 
 ```yaml
 x-kubernetes-validations:
-  - rule: self == oldSelf
-    message: "AgentDiagnostic is immutable after creation"
+  # Full spec immutability
+  - rule: self.spec == oldSelf.spec
+    message: "AgentDiagnostic spec is immutable after creation"
+  # Correlation label immutability — must be locked separately;
+  # self == oldSelf does not cover metadata.labels
+  - rule: >
+      !has(oldSelf.metadata.labels) ||
+      !("aip.io/correlationID" in oldSelf.metadata.labels) ||
+      oldSelf.metadata.labels["aip.io/correlationID"] == self.metadata.labels["aip.io/correlationID"]
+    message: "aip.io/correlationID label is immutable after creation"
+  # spec.correlationID must match aip.io/correlationID label at creation
+  - rule: >
+      !has(self.metadata.labels) ||
+      !("aip.io/correlationID" in self.metadata.labels) ||
+      self.metadata.labels["aip.io/correlationID"] == self.spec.correlationID
+    message: "aip.io/correlationID label must match spec.correlationID"
 ```
 
 ### Standard Labels
@@ -149,12 +164,16 @@ kubectl get agentdiagnostics,agentrequests,auditrecords \
 | `AgentRequest` status | Control plane | Authoritative | Authoritative — governance decision |
 | `AuditRecord` | Control plane | Authoritative | Authoritative — tamper-evident |
 
+## Retention and Garbage Collection
+
+Unlike `v1.Event` (which has a server-side TTL of ~1 hour), `AgentDiagnostic` records are part of the incident audit trail and must not disappear before the `AuditRecord` and `AgentRequest` they correlate with. Retention follows the same default as `AuditRecord`: **365 days minimum**, operator-configurable. The aip-k8s controller SHOULD implement a background GC loop that deletes `AgentDiagnostic` records past the configured retention window, consistent with how terminal `AgentRequest` and `AuditRecord` objects are purged.
+
 ## Implementation Checklist
 
 - [ ] Add `AgentDiagnostic` type to `api/v1alpha1/agentdiagnostic_types.go`
 - [ ] Register the type in `groupversion_info.go` and `zz_generated.deepcopy.go`
 - [ ] Add CEL immutability validation rule to the CRD manifest in `config/crd/`
-- [ ] Add RBAC: agents get `create` on `agentdiagnostics`; agents do NOT get `update` or `patch`
+- [ ] Add RBAC: agents get `create` on `agentdiagnostics`; agents MUST NOT have `update`, `patch`, or `delete` — delete would allow agents to erase their own evidence
 - [ ] No controller — do not add a reconciler for this type
 - [ ] Update `README.md` — add `AgentDiagnostic` to the Core APIs table
 - [ ] Add `AgentDiagnostic` to the `OSS Scope and Known Limitations` table if deferred
