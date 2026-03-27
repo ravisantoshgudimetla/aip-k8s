@@ -8,9 +8,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -337,6 +340,22 @@ func (s *Server) handleCompletedAgentRequest(w http.ResponseWriter, r *http.Requ
 		"ActionSuccess", "Agent successfully completed the action")
 }
 
+// sanitizeForDNS converts an arbitrary string into a valid DNS label segment
+// suitable for use in GenerateName (max 57 chars to leave room for the suffix)
+// and as a Kubernetes label value (max 63 chars).
+var invalidDNSChars = regexp.MustCompile(`[^a-z0-9-]`)
+
+func sanitizeDNSSegment(s string, maxLen int) string {
+	s = strings.ToLower(s)
+	s = invalidDNSChars.ReplaceAllString(s, "-")
+	if len(s) > maxLen {
+		s = s[:maxLen]
+	}
+	// Trim leading/trailing hyphens that would make the label invalid.
+	s = strings.Trim(s, "-")
+	return s
+}
+
 func (s *Server) handleCreateAgentDiagnostic(w http.ResponseWriter, r *http.Request) {
 	var body createAgentDiagnosticBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -359,13 +378,18 @@ func (s *Server) handleCreateAgentDiagnostic(w http.ResponseWriter, r *http.Requ
 		details = &apiextensionsv1.JSON{Raw: body.Details}
 	}
 
+	// Sanitize agentIdentity: GenerateName prefix must be a valid DNS segment;
+	// label values must be ≤63 chars and match Kubernetes label-value rules.
+	safeIdentityForName := sanitizeDNSSegment(body.AgentIdentity, 57)
+	safeIdentityForLabel := sanitizeDNSSegment(body.AgentIdentity, 63)
+
 	diag := &v1alpha1.AgentDiagnostic{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: fmt.Sprintf("diag-%s-", body.AgentIdentity),
+			GenerateName: fmt.Sprintf("diag-%s-", safeIdentityForName),
 			Namespace:    ns,
 			Labels: map[string]string{
 				"aip.io/correlationID":  body.CorrelationID,
-				"aip.io/agentIdentity":  body.AgentIdentity,
+				"aip.io/agentIdentity":  safeIdentityForLabel,
 				"aip.io/diagnosticType": body.DiagnosticType,
 			},
 		},
@@ -399,7 +423,11 @@ func (s *Server) handleGetAgentDiagnostic(w http.ResponseWriter, r *http.Request
 
 	var diag v1alpha1.AgentDiagnostic
 	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &diag); err != nil {
-		writeError(w, http.StatusNotFound, "AgentDiagnostic not found")
+		if apierrors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, "AgentDiagnostic not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get AgentDiagnostic: %v", err))
+		}
 		return
 	}
 
