@@ -94,13 +94,6 @@ spec:
             - message: AgentDiagnostic spec is immutable after creation
               rule: self == oldSelf
         type: object
-        x-kubernetes-validations:
-        - message: aip.io/correlationID label is immutable after creation
-          rule: '!has(oldSelf.metadata.labels) || !(''aip.io/correlationID'' in oldSelf.metadata.labels)
-            || oldSelf.metadata.labels[''aip.io/correlationID''] == self.metadata.labels[''aip.io/correlationID'']'
-        - message: aip.io/correlationID label must match spec.correlationID
-          rule: '!has(self.metadata.labels) || !(''aip.io/correlationID'' in self.metadata.labels)
-            || self.metadata.labels[''aip.io/correlationID''] == self.spec.correlationID'
     served: true
     storage: true
     subresources: {}

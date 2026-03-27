@@ -63,8 +63,6 @@ type AgentDiagnosticSpec struct {
 // +kubebuilder:printcolumn:name="Type",type=string,JSONPath=`.spec.diagnosticType`
 // +kubebuilder:printcolumn:name="Summary",type=string,JSONPath=`.spec.summary`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
-// +kubebuilder:validation:XValidation:rule="!has(oldSelf.metadata.labels) || !('aip.io/correlationID' in oldSelf.metadata.labels) || oldSelf.metadata.labels['aip.io/correlationID'] == self.metadata.labels['aip.io/correlationID']",message="aip.io/correlationID label is immutable after creation"
-// +kubebuilder:validation:XValidation:rule="!has(self.metadata.labels) || !('aip.io/correlationID' in self.metadata.labels) || self.metadata.labels['aip.io/correlationID'] == self.spec.correlationID",message="aip.io/correlationID label must match spec.correlationID"
 type AgentDiagnostic struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
