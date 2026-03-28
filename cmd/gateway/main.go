@@ -27,13 +27,24 @@ import (
 )
 
 var (
-	addr = flag.String("addr", ":8080", "The address to listen on for HTTP requests")
+	addr        = flag.String("addr", ":8080", "The address to listen on for HTTP requests")
+	dedupWindow = flag.Duration("dedup-window", 24*time.Hour,
+		"Duration within which duplicate active requests are rejected with 409. Set to 0 to disable.")
 )
 
 const defaultNamespace = "default"
 
+// terminalPhases are AgentRequest phases that represent a resolved request.
+// Requests in these phases do not block a new attempt for the same intent.
+var terminalPhases = map[string]bool{
+	v1alpha1.PhaseDenied:    true,
+	v1alpha1.PhaseCompleted: true,
+	v1alpha1.PhaseFailed:    true,
+}
+
 type Server struct {
-	client client.Client
+	client      client.Client
+	dedupWindow time.Duration
 }
 
 type affectedTargetBody struct {
@@ -144,7 +155,7 @@ func main() {
 		log.Fatalf("Failed to create client: %v", err)
 	}
 
-	server := &Server{client: k8sClient}
+	server := &Server{client: k8sClient, dedupWindow: *dedupWindow}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -202,6 +213,45 @@ func buildReasoningTrace(body *createAgentRequestBody) *v1alpha1.ReasoningTrace 
 	return rt
 }
 
+// checkDuplicate returns a non-nil error and writes a 409 if an active request
+// for the same (agentIdentity, action, targetURI) exists within the dedup window.
+// Returns nil (and writes nothing) when no duplicate is found or dedup is disabled.
+//
+// Note: the List→Create sequence is not atomic. Concurrent requests with the
+// same key can both pass this check and both be created. This is intentional:
+// dedup provides best-effort protection against reconciliation-loop floods, not
+// a hard mutual-exclusion guarantee. A strict guarantee would require a
+// ValidatingAdmissionWebhook or a unique server-side constraint.
+func (s *Server) checkDuplicate(
+	r *http.Request, agentIdentity, action, targetURI, ns string, w http.ResponseWriter,
+) error {
+	if s.dedupWindow == 0 {
+		return nil
+	}
+	var existing v1alpha1.AgentRequestList
+	if err := s.client.List(r.Context(), &existing, client.InNamespace(ns)); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to check for duplicate requests: %v", err))
+		return err
+	}
+	cutoff := time.Now().Add(-s.dedupWindow)
+	for _, req := range existing.Items {
+		if terminalPhases[req.Status.Phase] || req.CreationTimestamp.Time.Before(cutoff) {
+			continue
+		}
+		if req.Spec.AgentIdentity == agentIdentity &&
+			req.Spec.Action == action &&
+			req.Spec.Target.URI == targetURI {
+			err := fmt.Errorf("duplicate")
+			writeError(w, http.StatusConflict, fmt.Sprintf(
+				"duplicate request: an active request for the same agent, action, and target already exists (created %s ago)",
+				time.Since(req.CreationTimestamp.Time).Round(time.Second),
+			))
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request) {
 	var body createAgentRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -246,6 +296,10 @@ func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request
 			ExecutionMode:  body.ExecutionMode,
 			ScopeBounds:    body.ScopeBounds,
 		},
+	}
+
+	if err := s.checkDuplicate(r, body.AgentIdentity, body.Action, body.TargetURI, ns, w); err != nil {
+		return
 	}
 
 	if err := s.client.Create(r.Context(), agentReq); err != nil {
