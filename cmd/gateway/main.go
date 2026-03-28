@@ -69,6 +69,7 @@ type createAgentRequestBody struct {
 	TargetURI      string                `json:"targetURI"`
 	Reason         string                `json:"reason"`
 	Namespace      string                `json:"namespace"`
+	CorrelationID  string                `json:"correlationID,omitempty"`
 	CascadeModel   *cascadeModelBody     `json:"cascadeModel,omitempty"`
 	ReasoningTrace *reasoningTraceBody   `json:"reasoningTrace,omitempty"`
 	Parameters     json.RawMessage       `json:"parameters,omitempty"`
@@ -223,10 +224,16 @@ func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request
 		parameters = &apiextensionsv1.JSON{Raw: body.Parameters}
 	}
 
+	reqLabels := map[string]string{}
+	if body.CorrelationID != "" {
+		reqLabels["aip.io/correlationID"] = sanitizeLabelValue(body.CorrelationID)
+	}
+
 	agentReq := &v1alpha1.AgentRequest{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: fmt.Sprintf("%s-", body.AgentIdentity),
+			GenerateName: fmt.Sprintf("%s-", sanitizeDNSSegment(body.AgentIdentity, 57)),
 			Namespace:    ns,
+			Labels:       reqLabels,
 		},
 		Spec: v1alpha1.AgentRequestSpec{
 			AgentIdentity:  body.AgentIdentity,
@@ -275,6 +282,7 @@ func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request
 				phase == v1alpha1.PhaseCompleted || phase == v1alpha1.PhaseFailed {
 				writeJSON(w, http.StatusCreated, map[string]any{
 					"name":                     current.Name,
+					"labels":                   reqLabels,
 					"phase":                    current.Status.Phase,
 					"denial":                   current.Status.Denial,
 					"conditions":               current.Status.Conditions,
@@ -289,6 +297,7 @@ func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request
 				meta.IsStatusConditionTrue(current.Status.Conditions, v1alpha1.ConditionRequiresApproval) {
 				writeJSON(w, http.StatusCreated, map[string]any{
 					"name":                     current.Name,
+					"labels":                   reqLabels,
 					"phase":                    current.Status.Phase,
 					"conditions":               current.Status.Conditions,
 					"controlPlaneVerification": current.Status.ControlPlaneVerification,
