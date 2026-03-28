@@ -104,6 +104,8 @@ make build-gateway
 |--------|------|-------------|
 | `POST` | `/agent-requests` | Submit an AgentRequest. Blocks (up to 90s) until the control plane reaches a terminal phase, then returns the result. |
 | `GET` | `/agent-requests/{name}` | Poll an AgentRequest by name. |
+| `POST` | `/agent-requests/{name}/executing` | Signal that the agent has started executing an approved request. Advances the phase to `Executing`. |
+| `POST` | `/agent-requests/{name}/completed` | Signal that the agent successfully completed the action. Advances the phase to `Completed`. |
 | `POST` | `/agent-diagnostics` | Record an agent observation before acting. Returns the generated resource name and the normalized label values written to Kubernetes. |
 | `GET` | `/agent-diagnostics/{name}` | Retrieve a diagnostic record by name. |
 
@@ -126,7 +128,8 @@ curl -s -X POST http://localhost:8080/agent-diagnostics \
 # so you can use them in label-selector queries without guessing normalization:
 # { "name": "diag-sre-agent-v1-x7k9p", "labels": { "aip.io/correlationID": "incident-abc123", ... } }
 
-# 2. Submit the intent carrying the same correlationID
+# 2. Submit the intent — pass the same correlationID so the gateway stamps
+#    aip.io/correlationID on the AgentRequest label, linking both resources.
 curl -s -X POST http://localhost:8080/agent-requests \
   -H "Content-Type: application/json" \
   -d '{
@@ -134,13 +137,14 @@ curl -s -X POST http://localhost:8080/agent-requests \
     "action": "restart",
     "targetURI": "k8s://production/deployment/payment-api",
     "reason": "OOMKilled 3 times in 10 minutes. Diagnostic: diag-sre-agent-v1-x7k9p",
+    "correlationID": "incident-abc123",
     "namespace": "production"
   }'
 ```
 
 ### Querying the full incident chain
 
-Both the `AgentDiagnostic` and the subsequent `AgentRequest` carry the same `aip.io/correlationID` label. Retrieve the complete chain with a single command:
+When a `correlationID` is supplied to both `POST /agent-diagnostics` and `POST /agent-requests`, the gateway stamps `aip.io/correlationID` on both resources as a label. Retrieve the complete chain with a single command:
 
 ```sh
 kubectl get agentdiagnostics,agentrequests,auditrecords \

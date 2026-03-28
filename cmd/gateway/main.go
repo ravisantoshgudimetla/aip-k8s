@@ -69,6 +69,7 @@ type createAgentRequestBody struct {
 	TargetURI      string                `json:"targetURI"`
 	Reason         string                `json:"reason"`
 	Namespace      string                `json:"namespace"`
+	CorrelationID  string                `json:"correlationID,omitempty"`
 	CascadeModel   *cascadeModelBody     `json:"cascadeModel,omitempty"`
 	ReasoningTrace *reasoningTraceBody   `json:"reasoningTrace,omitempty"`
 	Parameters     json.RawMessage       `json:"parameters,omitempty"`
@@ -223,10 +224,16 @@ func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request
 		parameters = &apiextensionsv1.JSON{Raw: body.Parameters}
 	}
 
+	labels := map[string]string{}
+	if body.CorrelationID != "" {
+		labels["aip.io/correlationID"] = sanitizeLabelValue(body.CorrelationID)
+	}
+
 	agentReq := &v1alpha1.AgentRequest{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: fmt.Sprintf("%s-", body.AgentIdentity),
+			GenerateName: fmt.Sprintf("%s-", sanitizeDNSSegment(body.AgentIdentity, 57)),
 			Namespace:    ns,
+			Labels:       labels,
 		},
 		Spec: v1alpha1.AgentRequestSpec{
 			AgentIdentity:  body.AgentIdentity,
