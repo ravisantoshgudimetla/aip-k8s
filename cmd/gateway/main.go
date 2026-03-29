@@ -586,7 +586,11 @@ func (s *Server) handleListAgentRequests(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, list.Items)
+	items := list.Items
+	if items == nil {
+		items = []v1alpha1.AgentRequest{}
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 //nolint:dupl // similar to handleListAgentDiagnostics

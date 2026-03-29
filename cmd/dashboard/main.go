@@ -88,7 +88,7 @@ func (s *DashboardServer) proxyToGateway(w http.ResponseWriter, r *http.Request)
 		targetURL += "?" + r.URL.RawQuery
 	}
 
-	req, err := http.NewRequest(r.Method, targetURL, r.Body)
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
