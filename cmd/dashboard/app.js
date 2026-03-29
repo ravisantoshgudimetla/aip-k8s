@@ -1,7 +1,21 @@
+// escapeHtml prevents XSS by escaping user-controlled strings before
+// inserting them into innerHTML template literals.
+function escapeHtml(str) {
+    if (str == null) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 const state = {
     requests: [],
     selectedRequest: null,
-    auditRecords: []
+    auditRecords: [],
+    diagnostics: [],
+    namespace: 'default'
 };
 
 async function fetchRequests() {
@@ -35,7 +49,7 @@ async function fetchRequests() {
 
 async function fetchAuditRecords(name) {
     try {
-        const response = await fetch(`/api/audit-records?agentRequest=${name}`);
+        const response = await fetch(`/api/audit-records?agentRequest=${encodeURIComponent(name)}`);
         state.auditRecords = await response.json();
         renderDetails();
     } catch (err) {
@@ -50,7 +64,7 @@ async function performAction(name, action, reason) {
             opts.headers = { 'Content-Type': 'application/json' };
             opts.body = JSON.stringify({ reason });
         }
-        const response = await fetch(`/api/agent-requests/${name}/${action}`, opts);
+        const response = await fetch(`/api/agent-requests/${encodeURIComponent(name)}/${encodeURIComponent(action)}`, opts);
         if (response.ok) {
             await fetchRequests();
         } else {
@@ -71,7 +85,8 @@ function promptApproval(name, hasActiveEndpoints) {
         return;
     }
 
-    // Build the reason modal
+    // Build the reason modal. `name` is bound via data attribute, not inline JS,
+    // to avoid attribute injection.
     const overlay = document.createElement('div');
     overlay.id = 'reason-overlay';
     overlay.style.cssText = `
@@ -80,7 +95,7 @@ function promptApproval(name, hasActiveEndpoints) {
 
     overlay.innerHTML = `
         <div style="background:var(--surface-color);border:1px solid var(--border-color);border-radius:8px;padding:2rem;max-width:480px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
-            <h3 style="margin:0 0 0.5rem;color:var(--error);">⚠ Override Required — Live Traffic Detected</h3>
+            <h3 style="margin:0 0 0.5rem;color:var(--error);">&#9888; Override Required — Live Traffic Detected</h3>
             <p style="font-size:0.85rem;color:var(--text-secondary);margin:0 0 1.25rem;">
                 The AIP control plane independently verified <strong style="color:var(--error);">active endpoints</strong>
                 on this resource. You are approving a destructive action against live cluster evidence.
@@ -94,13 +109,19 @@ function promptApproval(name, hasActiveEndpoints) {
                 <button onclick="document.getElementById('reason-overlay').remove()"
                     style="padding:0.5rem 1.25rem;background:transparent;border:1px solid var(--border-color);
                            border-radius:4px;color:var(--text-secondary);cursor:pointer;">Cancel</button>
-                <button onclick="submitApprovalWithReason('${name}')"
+                <button id="confirm-override-btn"
                     style="padding:0.5rem 1.25rem;background:var(--error);border:none;
                            border-radius:4px;color:white;font-weight:600;cursor:pointer;">Confirm Override</button>
             </div>
         </div>`;
 
     document.body.appendChild(overlay);
+
+    // Attach the name via closure, not via inline attribute, to avoid injection.
+    document.getElementById('confirm-override-btn').addEventListener('click', () => {
+        submitApprovalWithReason(name);
+    });
+
     document.getElementById('override-reason').focus();
 }
 
@@ -131,16 +152,17 @@ function renderList() {
         const isActive = state.selectedRequest && state.selectedRequest.metadata.name === req.metadata.name;
         const phase = req.status?.phase || 'Pending';
         const time = new Date(req.metadata.creationTimestamp).toLocaleTimeString();
+        const name = escapeHtml(req.metadata.name);
 
         return `
-            <div class="request-item ${isActive ? 'active' : ''}" onclick="selectRequestById('${req.metadata.name}')">
-                <div class="title">${req.spec.agentIdentity}</div>
+            <div class="request-item ${isActive ? 'active' : ''}" data-name="${name}" onclick="selectRequestById(this.dataset.name)">
+                <div class="title">${escapeHtml(req.spec.agentIdentity)}</div>
                 <div class="meta">
-                    <span class="badge badge-${phase.toLowerCase()}">${phase}</span>
+                    <span class="badge badge-${escapeHtml(phase.toLowerCase())}">${escapeHtml(phase)}</span>
                     <span>${time}</span>
                 </div>
                 <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.4rem;">
-                    ${req.spec.action} → ${req.spec.target.uri}
+                    ${escapeHtml(req.spec.action)} &rarr; ${escapeHtml(req.spec.target.uri)}
                 </div>
             </div>
         `;
@@ -153,7 +175,6 @@ window.selectRequestById = (name) => {
 };
 
 function conditionBadge(condition) {
-    // Semantically correct labels per condition type
     const positiveTypes = ['PolicyEvaluated', 'Approved', 'LockAcquired', 'Executing', 'Completed'];
     const isPositive = positiveTypes.includes(condition.type);
     const isTrue = condition.status === 'True';
@@ -175,29 +196,6 @@ function conditionBadge(condition) {
     return `<span style="color: ${color}; font-weight: 600; font-size: 0.8rem;">${label}</span>`;
 }
 
-function renderBlastRadius(cascadeModel) {
-    if (!cascadeModel || !cascadeModel.affectedTargets || cascadeModel.affectedTargets.length === 0) {
-        return `<div style="color: var(--text-secondary); font-size: 0.85rem;">No blast radius declared</div>`;
-    }
-
-    const effectColors = {
-        disrupted: 'var(--error)',
-        modified: 'var(--warning)',
-        deleted: '#ff4444',
-        orphaned: 'var(--text-secondary)'
-    };
-
-    return cascadeModel.affectedTargets.map(t => {
-        const color = effectColors[t.effectType] || 'var(--text-secondary)';
-        return `
-            <div style="display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem; background: rgba(255,255,255,0.03); border-radius: 4px; margin-bottom: 0.5rem;">
-                <span style="color: ${color}; font-weight: 700; font-size: 0.7rem; text-transform: uppercase; min-width: 70px;">${t.effectType}</span>
-                <span style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: #cbd5e1;">${t.uri}</span>
-            </div>
-        `;
-    }).join('');
-}
-
 function renderReasoningTrace(rt) {
     const confidence = rt.confidenceScore ?? null;
     const pct = confidence !== null ? Math.round(confidence * 100) : null;
@@ -209,17 +207,17 @@ function renderReasoningTrace(rt) {
             const c = p >= 80 ? 'var(--success)' : p >= 60 ? 'var(--warning)' : 'var(--error)';
             return `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem; font-size:0.82rem;">
-                    <span style="color:var(--text-secondary);">${k.replace(/_/g,' ')}</span>
+                    <span style="color:var(--text-secondary);">${escapeHtml(k.replace(/_/g,' '))}</span>
                     <span style="color:${c}; font-weight:600;">${p}%</span>
                 </div>`;
         }).join('') : '';
 
     const alternatives = rt.alternatives?.length
-        ? rt.alternatives.map(a => `<span style="display:inline-block; padding:0.2rem 0.6rem; background:rgba(255,255,255,0.05); border-radius:9999px; font-size:0.78rem; margin:0.2rem 0.2rem 0 0; color:var(--text-secondary);">${a}</span>`).join('')
+        ? rt.alternatives.map(a => `<span style="display:inline-block; padding:0.2rem 0.6rem; background:rgba(255,255,255,0.05); border-radius:9999px; font-size:0.78rem; margin:0.2rem 0.2rem 0 0; color:var(--text-secondary);">${escapeHtml(a)}</span>`).join('')
         : '<span style="color:var(--text-secondary); font-size:0.82rem;">None declared</span>';
 
     const traceLink = rt.traceReference
-        ? `<div style="margin-top:0.75rem; font-size:0.78rem;"><span style="color:var(--text-secondary);">Trace: </span><span style="font-family:monospace; color:var(--accent-color);">${rt.traceReference}</span></div>`
+        ? `<div style="margin-top:0.75rem; font-size:0.78rem;"><span style="color:var(--text-secondary);">Trace: </span><span style="font-family:monospace; color:var(--accent-color);">${escapeHtml(rt.traceReference)}</span></div>`
         : '';
 
     return `
@@ -249,8 +247,8 @@ function renderParameters(params) {
         const color = isFalse ? 'var(--error)' : 'var(--text-primary)';
         return `
             <div style="display:flex; justify-content:space-between; padding:0.4rem 0; border-bottom:1px solid var(--border-color); font-size:0.85rem;">
-                <span style="color:var(--text-secondary);">${k}</span>
-                <span style="font-family:monospace; color:${color};">${JSON.stringify(v)}</span>
+                <span style="color:var(--text-secondary);">${escapeHtml(k)}</span>
+                <span style="font-family:monospace; color:${color};">${escapeHtml(JSON.stringify(v))}</span>
             </div>`;
     }).join('');
     return `
@@ -270,8 +268,8 @@ function renderControlPlaneVerification(cpv) {
         </div>`;
     }
 
-    const check  = `<span style="color:var(--error);font-weight:700;">✗</span>`;
-    const ok     = `<span style="color:var(--success);font-weight:700;">✓</span>`;
+    const check  = `<span style="color:var(--error);font-weight:700;">&#x2717;</span>`;
+    const ok     = `<span style="color:var(--success);font-weight:700;">&#x2713;</span>`;
     const endpointIcon = cpv.hasActiveEndpoints ? check : ok;
     const replicaIcon  = cpv.readyReplicas > 1   ? check : ok;
 
@@ -291,8 +289,8 @@ function renderControlPlaneVerification(cpv) {
     const downstream = cpv.downstreamServices?.length
         ? cpv.downstreamServices.map(s => `
             <div style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;font-size:0.8rem;">
-                <span style="color:var(--error);font-weight:700;">✗</span>
-                <span style="font-family:'JetBrains Mono',monospace;color:#cbd5e1;">${s}</span>
+                <span style="color:var(--error);font-weight:700;">&#x2717;</span>
+                <span style="font-family:'JetBrains Mono',monospace;color:#cbd5e1;">${escapeHtml(s)}</span>
                 <span style="color:var(--text-secondary);font-size:0.72rem;">(would be disrupted)</span>
             </div>`).join('')
         : `<div style="color:var(--text-secondary);font-size:0.8rem;">None detected</div>`;
@@ -320,13 +318,13 @@ function renderGovernanceTimeline(phase, needsApproval) {
     const stepHtml = steps.map((s, i) => {
         let dotColor, dotContent, labelColor;
         if (s.denied) {
-            dotColor = 'var(--error)'; dotContent = '✕'; labelColor = 'var(--error)';
+            dotColor = 'var(--error)'; dotContent = '&#x2715;'; labelColor = 'var(--error)';
         } else if (s.active) {
-            dotColor = 'var(--warning)'; dotContent = '◉'; labelColor = 'var(--warning)';
+            dotColor = 'var(--warning)'; dotContent = '&#x25C9;'; labelColor = 'var(--warning)';
         } else if (s.done) {
-            dotColor = 'var(--success)'; dotContent = '●'; labelColor = 'var(--text-secondary)';
+            dotColor = 'var(--success)'; dotContent = '&#x25CF;'; labelColor = 'var(--text-secondary)';
         } else {
-            dotColor = 'var(--border-color)'; dotContent = '○'; labelColor = 'var(--border-color)';
+            dotColor = 'var(--border-color)'; dotContent = '&#x25CB;'; labelColor = 'var(--border-color)';
         }
 
         const connector = i < steps.length - 1
@@ -369,23 +367,20 @@ function renderDetails() {
     }
 
     const phase = req.status?.phase || 'Pending';
-    // Sort ascending (oldest first) for timeline readability
     const auditLogs = [...state.auditRecords].sort((a, b) => new Date(a.spec.timestamp) - new Date(b.spec.timestamp));
-
     const needsApproval = phase === 'Pending' && req.status?.conditions?.some(c => c.type === 'RequiresApproval' && c.status === 'True');
     const reason = req.spec.reason || 'No reason provided.';
-
-    const cascadeCount = req.spec.cascadeModel?.affectedTargets?.length || 0;
+    const name = req.metadata.name;
 
     detailsEl.innerHTML = `
         <div style="display: flex; justify-content: space-between; align-items: flex-start;">
             <div>
-                <h2 style="margin-bottom: 0.5rem;">${req.spec.agentIdentity}</h2>
+                <h2 style="margin-bottom: 0.5rem;">${escapeHtml(req.spec.agentIdentity)}</h2>
                 <div style="color: var(--text-secondary); font-size: 0.9rem;">
-                    ${req.metadata.name} &nbsp;·&nbsp; ${req.spec.action} on <code style="font-size: 0.85rem;">${req.spec.target.uri}</code>
+                    ${escapeHtml(name)} &nbsp;&middot;&nbsp; ${escapeHtml(req.spec.action)} on <code style="font-size: 0.85rem;">${escapeHtml(req.spec.target.uri)}</code>
                 </div>
             </div>
-            <span class="badge badge-${phase.toLowerCase()}" style="font-size: 1rem; padding: 0.5rem 1rem;">${phase}</span>
+            <span class="badge badge-${escapeHtml(phase.toLowerCase())}" style="font-size: 1rem; padding: 0.5rem 1rem;">${escapeHtml(phase)}</span>
         </div>
 
         ${renderGovernanceTimeline(phase, needsApproval)}
@@ -396,7 +391,7 @@ function renderDetails() {
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
                     Agent Declared
                 </div>
-                <div class="reasoning-content" style="margin-bottom:1rem;">${reason}</div>
+                <div class="reasoning-content" style="margin-bottom:1rem;">${escapeHtml(reason)}</div>
                 <div style="font-size:0.78rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-secondary); margin-bottom:0.5rem;">Confidence</div>
                 ${req.spec.reasoningTrace?.confidenceScore != null ? (() => {
                     const pct = Math.round(req.spec.reasoningTrace.confidenceScore * 100);
@@ -412,13 +407,13 @@ function renderDetails() {
                         const effectColors = { disrupted:'var(--error)', modified:'var(--warning)', deleted:'#ff4444', orphaned:'var(--text-secondary)' };
                         const color = effectColors[t.effectType] || 'var(--text-secondary)';
                         return `<div style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;font-size:0.8rem;">
-                            <span style="color:${color};font-weight:700;min-width:65px;font-size:0.7rem;text-transform:uppercase;">${t.effectType}</span>
-                            <span style="font-family:'JetBrains Mono',monospace;color:#cbd5e1;">${t.uri.split('/').pop()}</span>
+                            <span style="color:${color};font-weight:700;min-width:65px;font-size:0.7rem;text-transform:uppercase;">${escapeHtml(t.effectType)}</span>
+                            <span style="font-family:'JetBrains Mono',monospace;color:#cbd5e1;">${escapeHtml(t.uri.split('/').pop())}</span>
                         </div>`;
                     }).join('')
                     : '<div style="color:var(--text-secondary);font-size:0.82rem;">None declared</div>'}
                 ${req.spec.cascadeModel?.modelSourceTrust
-                    ? `<div style="margin-top:0.75rem;font-size:0.75rem;color:var(--text-secondary);">Model source trust: <strong style="color:var(--text-primary);">${req.spec.cascadeModel.modelSourceTrust}</strong>${req.spec.cascadeModel.modelSourceId ? ' · ' + req.spec.cascadeModel.modelSourceId : ''}</div>`
+                    ? `<div style="margin-top:0.75rem;font-size:0.75rem;color:var(--text-secondary);">Model source trust: <strong style="color:var(--text-primary);">${escapeHtml(req.spec.cascadeModel.modelSourceTrust)}</strong>${req.spec.cascadeModel.modelSourceID ? ' &middot; ' + escapeHtml(req.spec.cascadeModel.modelSourceID) : ''}</div>`
                     : ''}
             </div>
 
@@ -433,17 +428,17 @@ function renderDetails() {
                     ${req.status?.conditions?.map(c => `
                         <div style="margin-bottom: 0.6rem; padding: 0.4rem 0.5rem; background: rgba(255,255,255,0.03); border-radius: 4px;">
                             <div style="display: flex; justify-content: space-between; font-size: 0.82rem;">
-                                <span style="font-weight: 600;">${c.type}</span>
+                                <span style="font-weight: 600;">${escapeHtml(c.type)}</span>
                                 ${conditionBadge(c)}
                             </div>
-                            <div style="font-size: 0.72rem; color: var(--text-secondary); margin-top: 0.15rem;">${c.message || ''}</div>
+                            <div style="font-size: 0.72rem; color: var(--text-secondary); margin-top: 0.15rem;">${escapeHtml(c.message || '')}</div>
                         </div>
                     `).join('') || '<div style="color: var(--text-secondary); font-size: 0.85rem;">No conditions yet</div>'}
                 </div>
                 ${needsApproval ? `
                     <div class="actions">
-                        <button class="primary" onclick="promptApproval('${req.metadata.name}', ${!!req.status?.controlPlaneVerification?.hasActiveEndpoints})">Approve Override</button>
-                        <button class="danger" onclick="performAction('${req.metadata.name}', 'deny')">Deny</button>
+                        <button class="primary" data-name="${escapeHtml(name)}" data-endpoints="${!!req.status?.controlPlaneVerification?.hasActiveEndpoints}" onclick="promptApproval(this.dataset.name, this.dataset.endpoints === 'true')">Approve Override</button>
+                        <button class="danger" data-name="${escapeHtml(name)}" onclick="performAction(this.dataset.name, 'deny')">Deny</button>
                     </div>
                 ` : ''}
             </div>
@@ -460,9 +455,9 @@ function renderDetails() {
                 : auditLogs.map(log => `
                     <div class="audit-item">
                         <span class="time">${new Date(log.spec.timestamp).toLocaleTimeString()}</span>
-                        <span style="font-weight: 600; color: var(--accent-color);">${log.spec.event}</span>
+                        <span style="font-weight: 600; color: var(--accent-color);">${escapeHtml(log.spec.event)}</span>
                         ${log.spec.phaseTransition ? `
-                            <span style="color: var(--text-secondary);">&nbsp;(${log.spec.phaseTransition.from} → ${log.spec.phaseTransition.to})</span>
+                            <span style="color: var(--text-secondary);">&nbsp;(${escapeHtml(log.spec.phaseTransition.from)} &rarr; ${escapeHtml(log.spec.phaseTransition.to)})</span>
                         ` : ''}
                     </div>
                 `).join('')
@@ -471,5 +466,117 @@ function renderDetails() {
     `;
 }
 
+// ── Diagnostics tab ──────────────────────────────────────────────────────────
+
+window.showTab = function(tabName) {
+    const requestsView = document.getElementById('requests-view');
+    const diagnosticsView = document.getElementById('diagnostics-view');
+    const tabRequests = document.getElementById('tab-requests');
+    const tabDiagnostics = document.getElementById('tab-diagnostics');
+
+    if (tabName === 'requests') {
+        requestsView.style.display = 'block';
+        diagnosticsView.style.display = 'none';
+        tabRequests.classList.add('active');
+        tabDiagnostics.classList.remove('active');
+    } else {
+        requestsView.style.display = 'none';
+        diagnosticsView.style.display = 'block';
+        tabRequests.classList.remove('active');
+        tabDiagnostics.classList.add('active');
+        loadDiagnostics();
+    }
+};
+
+window.loadDiagnostics = async function() {
+    try {
+        const response = await fetch(`/api/agent-diagnostics?namespace=${encodeURIComponent(state.namespace)}`);
+        if (!response.ok) throw new Error('Failed to fetch diagnostics');
+        state.diagnostics = await response.json();
+        renderDiagnostics();
+    } catch (err) {
+        console.error('Error fetching diagnostics:', err);
+    }
+};
+
+function renderDiagnostics() {
+    const listEl = document.getElementById('diagnostics-list');
+    if (!listEl) return;
+
+    if (state.diagnostics.length === 0) {
+        listEl.innerHTML = `
+            <tr>
+                <td colspan="6" style="text-align: center; padding: 3rem; color: var(--text-secondary);">
+                    No diagnostics found in namespace &ldquo;${escapeHtml(state.namespace)}&rdquo;
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    const sorted = [...state.diagnostics].sort((a, b) =>
+        new Date(b.metadata.creationTimestamp) - new Date(a.metadata.creationTimestamp)
+    );
+
+    listEl.innerHTML = sorted.map(diag => {
+        const age = formatAge(diag.metadata.creationTimestamp);
+        // diag.metadata.name is a DNS label — safe for use as an element ID,
+        // but we still escape for defence in depth.
+        const detailsId = `details-${escapeHtml(diag.metadata.name)}`;
+        const hasDetails = diag.spec.details && Object.keys(diag.spec.details).length > 0;
+
+        return `
+            <tr>
+                <td style="white-space: nowrap; color: var(--text-secondary);">${age}</td>
+                <td><span class="chip">${escapeHtml(diag.spec.agentIdentity)}</span></td>
+                <td><span class="badge ${getDiagnosticTypeClass(diag.spec.diagnosticType)}">${escapeHtml(diag.spec.diagnosticType)}</span></td>
+                <td><span class="chip">${escapeHtml(diag.spec.correlationID)}</span></td>
+                <td style="max-width: 300px;">${escapeHtml(diag.spec.summary)}</td>
+                <td>
+                    ${hasDetails ?
+                        `<button class="details-btn" data-target="${escapeHtml(detailsId)}" onclick="toggleDetails(this.dataset.target)">View</button>
+                         <div id="${escapeHtml(detailsId)}" class="details-json" style="display:none"></div>`
+                        : '<span style="color: var(--text-secondary); font-size: 0.8rem;">None</span>'}
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    // Populate details JSON as text content (not innerHTML) to prevent injection.
+    sorted.forEach(diag => {
+        if (!diag.spec.details || Object.keys(diag.spec.details).length === 0) return;
+        const el = document.getElementById(`details-${diag.metadata.name}`);
+        if (el) el.textContent = JSON.stringify(diag.spec.details, null, 2);
+    });
+}
+
+function getDiagnosticTypeClass(type) {
+    const t = (type || '').toLowerCase();
+    if (t.includes('error') || t.includes('fail')) return 'badge-failed';
+    if (t.includes('warn')) return 'badge-denied';
+    if (t.includes('success') || t.includes('observation') || t.includes('diagnosis')) return 'badge-completed';
+    return 'badge-executing';
+}
+
+window.toggleDetails = function(id) {
+    const el = document.getElementById(id);
+    if (el) {
+        el.style.display = el.style.display === 'none' ? 'block' : 'none';
+        const btn = el.previousElementSibling;
+        if (btn) btn.textContent = el.style.display === 'none' ? 'View' : 'Hide';
+    }
+};
+
+function formatAge(timestamp) {
+    const diff = Math.floor((Date.now() - new Date(timestamp)) / 1000);
+    if (diff < 60) return diff + 's';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h';
+    return Math.floor(diff / 86400) + 'd';
+}
+
+// ── Bootstrap ────────────────────────────────────────────────────────────────
+
 fetchRequests();
 setInterval(fetchRequests, 3000);
+setInterval(loadDiagnostics, 3000);
