@@ -654,7 +654,7 @@ func (s *Server) handleListAgentDiagnostics(w http.ResponseWriter, r *http.Reque
 		if correlID != "" && item.Labels["aip.io/correlationID"] != correlID {
 			continue
 		}
-		if !ca.IsZero() && !item.CreationTimestamp.Time.After(ca) {
+		if !ca.IsZero() && !item.CreationTimestamp.After(ca) {
 			continue
 		}
 		if !cb.IsZero() && !item.CreationTimestamp.Time.Before(cb) {
@@ -664,7 +664,7 @@ func (s *Server) handleListAgentDiagnostics(w http.ResponseWriter, r *http.Reque
 	}
 
 	sort.Slice(results, func(i, j int) bool {
-		return results[i].CreationTimestamp.Time.After(results[j].CreationTimestamp.Time)
+		return results[i].CreationTimestamp.After(results[j].CreationTimestamp.Time)
 	})
 
 	writeJSON(w, http.StatusOK, results)
