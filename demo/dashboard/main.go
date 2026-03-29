@@ -150,6 +150,7 @@ func (s *DashboardServer) handleListAgentRequests(w http.ResponseWriter, r *http
 	_, _ = w.Write(data)
 }
 
+//nolint:dupl // same HTTP boilerplate as handleListAuditRecords but different types
 func (s *DashboardServer) handleListAgentDiagnostics(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
