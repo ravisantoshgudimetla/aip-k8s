@@ -262,6 +262,11 @@ func (s *Server) checkDuplicate(
 // diagnostic for the same (agentIdentity, diagnosticType, correlationID) exists
 // within the dedup window.
 //
+// Note: the List→Create sequence is not atomic. Concurrent requests with the
+// same key can both pass this check and both be created. This is intentional:
+// dedup provides best-effort protection against agent retry floods, not
+// a hard mutual-exclusion guarantee.
+//
 //nolint:dupl // structurally similar to checkDuplicate
 func (s *Server) checkDiagnosticDuplicate(
 	r *http.Request, agentIdentity, diagnosticType, correlationID, ns string, w http.ResponseWriter,
