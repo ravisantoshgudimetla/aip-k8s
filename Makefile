@@ -351,7 +351,7 @@ chart-e2e: ## Install Helm chart and run chart e2e tests (images must already be
 	@kubectl port-forward -n aip-k8s-system svc/aip-k8s-gateway $(CHART_GW_PORT):8080 >/dev/null 2>&1 & echo $$! > $(CHART_PF_GW_PID)
 	@kubectl port-forward -n aip-k8s-system svc/aip-k8s-dashboard $(CHART_DASH_PORT):8082 >/dev/null 2>&1 & echo $$! > $(CHART_PF_DASH_PID)
 	@sleep 3
-	@GATEWAY_URL=http://localhost:$(CHART_GW_PORT) DASHBOARD_URL=http://localhost:$(CHART_DASH_PORT) \
+	@GATEWAY_URL=http://localhost:$(CHART_GW_PORT) DASHBOARD_URL=http://localhost:$(CHART_DASH_PORT) IMAGE_TAG=$(CHART_IMAGE_TAG) \
 	  go test -v -tags=e2e ./test/e2e/... -ginkgo.v -ginkgo.focus "Chart"; EXIT=$$?; \
 	  [ -f $(CHART_PF_GW_PID) ]   && kill $$(cat $(CHART_PF_GW_PID))   2>/dev/null; rm -f $(CHART_PF_GW_PID); \
 	  [ -f $(CHART_PF_DASH_PID) ] && kill $$(cat $(CHART_PF_DASH_PID)) 2>/dev/null; rm -f $(CHART_PF_DASH_PID); \

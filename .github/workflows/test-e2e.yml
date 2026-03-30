@@ -6,6 +6,9 @@ on:
       - main
   pull_request:
 
+env:
+  KIND_VERSION: v0.25.0
+
 jobs:
   test-e2e:
     name: Run on Ubuntu
@@ -19,9 +22,9 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install the latest version of kind
+      - name: Install kind
         run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-$(go env GOARCH)
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-$(go env GOARCH)
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
 

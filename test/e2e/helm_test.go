@@ -50,6 +50,9 @@ var _ = Describe("Chart", Ordered, func() {
 		if gatewayURL == "" || dashboardURL == "" {
 			Skip("GATEWAY_URL and DASHBOARD_URL not set — skipping chart e2e")
 		}
+		if tag := os.Getenv("IMAGE_TAG"); tag != "" {
+			GinkgoLogr.Info("chart e2e running against image tag", "tag", tag)
+		}
 
 		By("waiting for gateway /healthz to be reachable")
 		Eventually(func() int {
