@@ -57,17 +57,6 @@ jobs:
             kind load docker-image ghcr.io/${{ github.repository }}/${img}:${{ steps.tag.outputs.sha }} --name chart-e2e
           done
 
-      - name: Helm install aip-k8s
-        run: |
-          helm install aip-k8s charts/aip-k8s/ \
-            --namespace aip-k8s-system \
-            --create-namespace \
-            --set controller.image.tag=${{ steps.tag.outputs.sha }} \
-            --set gateway.image.tag=${{ steps.tag.outputs.sha }} \
-            --set dashboard.image.tag=${{ steps.tag.outputs.sha }} \
-            --wait \
-            --timeout 3m
-
       - name: Run chart e2e tests
         run: make chart-e2e CHART_IMAGE_TAG=${{ steps.tag.outputs.sha }}
         env:
