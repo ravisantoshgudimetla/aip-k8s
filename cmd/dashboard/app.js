@@ -16,7 +16,8 @@ const state = {
     auditRecords: [],
     diagnostics: [],
     diagnosticsJSON: '',
-    namespace: 'default'
+    namespace: 'default',
+    diagnosticsGen: 0
 };
 
 async function fetchRequests() {
@@ -466,9 +467,11 @@ window.loadDiagnostics = async function() {
     try {
         const ns = document.getElementById('ns-input')?.value.trim() || state.namespace;
         state.namespace = ns;
+        const gen = ++state.diagnosticsGen;
         const response = await fetch(`/api/agent-diagnostics?namespace=${encodeURIComponent(ns)}`);
         if (!response.ok) throw new Error('Failed to fetch diagnostics');
         const fresh = await response.json();
+        if (gen !== state.diagnosticsGen) return;
         const freshJSON = ns + ':' + JSON.stringify(fresh);
         if (freshJSON === state.diagnosticsJSON) return;
         state.diagnosticsJSON = freshJSON;
