@@ -469,7 +469,7 @@ window.loadDiagnostics = async function() {
         const response = await fetch(`/api/agent-diagnostics?namespace=${encodeURIComponent(ns)}`);
         if (!response.ok) throw new Error('Failed to fetch diagnostics');
         const fresh = await response.json();
-        const freshJSON = JSON.stringify(fresh);
+        const freshJSON = ns + ':' + JSON.stringify(fresh);
         if (freshJSON === state.diagnosticsJSON) return;
         state.diagnosticsJSON = freshJSON;
         state.diagnostics = fresh;
