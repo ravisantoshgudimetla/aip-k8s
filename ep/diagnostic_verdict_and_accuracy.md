@@ -60,6 +60,16 @@ Verdict values:
 A new Kind that stores running verdict counts and a computed accuracy ratio per `agentIdentity` per namespace. One CR per agent, upserted by the gateway whenever a verdict is saved.
 
 ```go
+// DiagnosticAccuracySummarySpec identifies the agent this summary tracks.
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+type DiagnosticAccuracySummarySpec struct {
+    // AgentIdentity specifies the agent this summary tracks.
+    // +kubebuilder:validation:Required
+    // +kubebuilder:validation:MinLength=1
+    AgentIdentity string `json:"agentIdentity"`
+}
+
 type DiagnosticAccuracySummaryStatus struct {
     // TotalReviewed is the total number of AgentDiagnostic records
     // with a non-empty verdict for this agentIdentity.
@@ -142,7 +152,7 @@ Both scenarios are mitigated by the recompute endpoint: `POST /agent-diagnostics
 The diagnostics tab gains:
 
 - A **Verdict** column (8th column). Reviewed diagnostics show a colored badge: `correct` = green, `partial` = yellow, `incorrect` = red. Unreviewed diagnostics show a "Review" button.
-- Clicking "Review" expands an inline form (same pattern as the existing Details toggle) with a verdict dropdown (`correct` / `partial` / `incorrect`) and an optional note textarea. Submitting calls `PATCH /api/agent-diagnostics/{name}/status`.
+- Clicking "Review" expands an inline form (same pattern as the existing Details toggle) with a verdict dropdown (`correct` / `partial` / `incorrect`) and an optional note textarea. Submitting calls `PATCH /agent-diagnostics/{name}/status` on the gateway (proxied by the dashboard as `PATCH /api/agent-diagnostics/{name}/status`).
 - A **per-agent accuracy chip** above the diagnostics table, showing `diagnosticAccuracy` from the `DiagnosticAccuracySummary` for the currently-filtered agent. Visible only when the namespace has at least one reviewed diagnostic.
 
 ## RBAC
@@ -171,7 +181,7 @@ The diagnostics tab gains:
 ## Implementation Checklist
 
 - [ ] Add `AgentDiagnosticStatus` struct to `api/v1alpha1/agentdiagnostic_types.go`; add `+kubebuilder:subresource:status` marker
-- [ ] Add `DiagnosticAccuracySummary` type to `api/v1alpha1/`
+- [ ] Add `DiagnosticAccuracySummary` type to `api/v1alpha1/`; add `+kubebuilder:subresource:status` marker
 - [ ] Run `make generate manifests` to regenerate CRDs and deep copy
 - [ ] Update RBAC roles: `agentdiagnostic_editor_role.yaml` gains `/status` update; new `diagnosticaccuracysummary_editor_role.yaml`
 - [ ] Gateway: `PATCH /agent-diagnostics/{name}/status` handler with three-step write (read + two writes) and retry on 409 for summary upsert
