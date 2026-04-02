@@ -63,6 +63,9 @@ A new Kind that stores running verdict counts and a computed accuracy ratio per 
 // DiagnosticAccuracySummarySpec identifies the agent this summary tracks.
 type DiagnosticAccuracySummarySpec struct {
     // AgentIdentity specifies the agent this summary tracks.
+    // Must be a valid DNS subdomain — the gateway uses a sanitized form of
+    // this value as the CR name, so non-DNS-safe characters are normalised
+    // before the CR is created or looked up.
     // +kubebuilder:validation:Required
     // +kubebuilder:validation:MinLength=1
     AgentIdentity string `json:"agentIdentity"`
@@ -173,7 +176,7 @@ The diagnostics tab gains:
 | Agent service account | `agentdiagnostics` | `create`, `get`, `list` |
 | Agent service account | `agentdiagnostics/status` | — (no access) |
 | Agent service account | `diagnosticaccuracysummaries` | — (no access) |
-| SRE / editor | `agentdiagnostics/status` | `update`, `patch` |
+| SRE / editor | `agentdiagnostics/status` | — (no access; reviews submitted via gateway HTTP API only) |
 | SRE / editor | `diagnosticaccuracysummaries` | `get`, `list`, `watch` |
 | SRE / editor | `diagnosticaccuracysummaries/status` | — (no access) |
 | Gateway service account | `agentdiagnostics/status` | `update`, `patch` |
@@ -193,9 +196,10 @@ The diagnostics tab gains:
 
 - [ ] Add `AgentDiagnosticStatus` struct to `api/v1alpha1/agentdiagnostic_types.go`; add `+kubebuilder:subresource:status` marker
 - [ ] Add `DiagnosticAccuracySummary` type to `api/v1alpha1/`; add `+kubebuilder:subresource:status` marker
-- [ ] Run `make generate manifests` to regenerate CRDs and deep copy
-- [ ] Update RBAC roles: `agentdiagnostic_editor_role.yaml` gains `/status` update; new `diagnosticaccuracysummary_editor_role.yaml`
-- [ ] Gateway: `PATCH /agent-diagnostics/{name}/status` handler with three-step write (read + two writes) and retry on 409 for summary upsert
+- [ ] Run `make manifests generate` to regenerate CRDs and deep copy (manifests first, then generate)
+- [ ] Update RBAC roles: `agentdiagnostic_editor_role.yaml` must NOT grant `/status` write — remove `patch`/`update` from SRE/editor role; new `diagnosticaccuracysummary_editor_role.yaml` (read-only on `/status`)
+- [ ] Add gateway service account `ClusterRole` granting `update`/`patch` on `agentdiagnostics/status` and `diagnosticaccuracysummaries/status`, and `get`/`list`/`create` on `diagnosticaccuracysummaries`
+- [ ] Gateway: `PATCH /agent-diagnostics/{name}/status` handler with three-step write (read + two writes) and retry on 409 for summary upsert; use `sanitizeDNSSegment(agentIdentity, 63)` as the `DiagnosticAccuracySummary` CR name — never the raw `agentIdentity`
 - [ ] Gateway: `POST /agent-diagnostics/recompute-accuracy` handler (scan + reconstruct summary)
 - [ ] Dashboard: verdict badge column + inline review form
 - [ ] Dashboard: per-agent accuracy chip above diagnostics table
