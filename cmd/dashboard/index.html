@@ -57,6 +57,7 @@
                     onchange="loadDiagnostics()"
                     onkeydown="if(event.key==='Enter')loadDiagnostics()" />
             </div>
+            <div id="accuracy-chip-container" style="padding: 0 1rem; margin-bottom: 0.5rem; display: none;"></div>
             <div class="diagnostics-table-container">
                 <table class="diagnostics-table">
                     <thead>
@@ -67,11 +68,12 @@
                             <th>Correlation ID</th>
                             <th>Summary</th>
                             <th>Details</th>
+                            <th>Verdict</th>
                         </tr>
                     </thead>
                     <tbody id="diagnostics-list">
                         <tr>
-                            <td colspan="6" style="text-align: center; padding: 2rem; color: var(--text-secondary);">
+                            <td colspan="7" style="text-align: center; padding: 2rem; color: var(--text-secondary);">
                                 Loading diagnostics...
                             </td>
                         </tr>

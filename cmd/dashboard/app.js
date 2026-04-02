@@ -473,14 +473,51 @@ window.loadDiagnostics = async function() {
         const fresh = await response.json();
         if (gen !== state.diagnosticsGen) return;
         const freshJSON = ns + ':' + JSON.stringify(fresh);
-        if (freshJSON === state.diagnosticsJSON) return;
-        state.diagnosticsJSON = freshJSON;
-        state.diagnostics = fresh;
-        renderDiagnostics();
+        if (freshJSON !== state.diagnosticsJSON) {
+            state.diagnosticsJSON = freshJSON;
+            state.diagnostics = fresh;
+        }
+        await fetchSummaries(gen, ns);
+        // Always re-render so formatAge() shows current elapsed times.
+        if (gen === state.diagnosticsGen) renderDiagnostics();
     } catch (err) {
         console.error('Error fetching diagnostics:', err);
     }
 };
+
+window.fetchSummaries = async function(gen, ns) {
+    const container = document.getElementById('accuracy-chip-container');
+    try {
+        const response = await fetch(`/api/diagnostic-accuracy-summaries?namespace=${encodeURIComponent(ns)}`);
+        // Guard against stale polls overtaking a newer one.
+        if (gen !== state.diagnosticsGen) return;
+        if (!response.ok) {
+            if (container) { container.style.display = 'none'; container.innerHTML = ''; }
+            return;
+        }
+        const summaries = await response.json();
+        if (!container) return;
+
+        if (!summaries || summaries.length === 0) {
+            container.style.display = 'none';
+            return;
+        }
+
+        container.style.display = 'block';
+        container.innerHTML = summaries.map(s => {
+            const acc = s.status?.diagnosticAccuracy;
+            if (acc == null) return '';
+            const pct = Math.round(acc * 100);
+            const color = pct >= 80 ? 'var(--success)' : pct >= 60 ? 'var(--warning)' : 'var(--error)';
+            return `<span style="display:inline-block;padding:0.4rem 0.75rem;background:rgba(255,255,255,0.05);border:1px solid var(--border-color);border-radius:4px;font-size:0.85rem;margin-right:0.5rem;color:var(--text-secondary);">
+                ${escapeHtml(s.spec.agentIdentity)} Accuracy: <strong style="color:${color};">${pct}%</strong>
+            </span>`;
+        }).join('');
+    } catch (e) {
+        console.error('Failed to fetch summaries', e);
+        if (container) { container.style.display = 'none'; container.innerHTML = ''; }
+    }
+}
 
 function renderDiagnostics() {
     const listEl = document.getElementById('diagnostics-list');
@@ -488,7 +525,7 @@ function renderDiagnostics() {
 
     if (!state.diagnostics || state.diagnostics.length === 0) {
         listEl.innerHTML = `
-            <tr><td colspan="6" style="text-align:center;padding:3rem;color:var(--text-secondary);">
+            <tr><td colspan="7" style="text-align:center;padding:3rem;color:var(--text-secondary);">
                 No diagnostics found in namespace &ldquo;${escapeHtml(state.namespace)}&rdquo;
             </td></tr>`;
         return;
@@ -502,6 +539,39 @@ function renderDiagnostics() {
         const age = formatAge(diag.metadata.creationTimestamp);
         const detailsId = `details-${escapeHtml(diag.metadata.name)}`;
         const hasDetails = diag.spec.details && Object.keys(diag.spec.details).length > 0;
+        const verdict = diag.status?.verdict;
+        const reviewFormId = `review-${escapeHtml(diag.metadata.name)}`;
+
+        let verdictBadge = '';
+        let reviewFormLabel = 'Review';
+        if (verdict) {
+            let vclass = 'badge-executing';
+            if (verdict === 'correct') vclass = 'badge-completed';
+            else if (verdict === 'incorrect') vclass = 'badge-failed';
+            else if (verdict === 'partial') vclass = 'badge-warning';
+            verdictBadge = `<span class="badge ${vclass}" style="margin-right:0.4rem;">${escapeHtml(verdict)}</span>`;
+            reviewFormLabel = 'Edit';
+        }
+
+        const selectedCorrect = verdict === 'correct' ? ' selected' : '';
+        const selectedPartial = verdict === 'partial' ? ' selected' : '';
+        const selectedIncorrect = verdict === 'incorrect' ? ' selected' : '';
+        // Submit is disabled until a verdict is chosen; pre-existing verdicts are already selected.
+        const submitDisabled = verdict ? '' : ' disabled';
+
+        const verdictContent = `
+            ${verdictBadge}<button class="details-btn" onclick="toggleDetails('${escapeHtml(reviewFormId)}')">${reviewFormLabel}</button>
+            <div id="${escapeHtml(reviewFormId)}" style="display:none;margin-top:0.5rem;padding:0.5rem;background:var(--surface-color);border:1px solid var(--border-color);border-radius:4px;">
+                <select id="verdict-${escapeHtml(diag.metadata.name)}" aria-label="Review verdict for ${escapeHtml(diag.metadata.name)}" onchange="document.getElementById('submit-${escapeHtml(diag.metadata.name)}').disabled=!this.value" style="width:100%;margin-bottom:0.5rem;padding:0.4rem;background:rgba(255,255,255,0.05);border:1px solid var(--border-color);color:var(--text-primary);border-radius:3px;font-size:0.8rem;">
+                    ${verdict ? '' : '<option value="">— select verdict —</option>'}
+                    <option value="correct"${selectedCorrect}>correct</option>
+                    <option value="partial"${selectedPartial}>partial</option>
+                    <option value="incorrect"${selectedIncorrect}>incorrect</option>
+                </select>
+                <textarea id="note-${escapeHtml(diag.metadata.name)}" aria-label="Reviewer note for ${escapeHtml(diag.metadata.name)}" placeholder="Reviewer note (optional)" maxlength="512" style="width:100%;box-sizing:border-box;margin-bottom:0.5rem;padding:0.4rem;background:rgba(255,255,255,0.05);border:1px solid var(--border-color);color:var(--text-primary);border-radius:3px;font-size:0.8rem;resize:vertical;">${escapeHtml(diag.status?.reviewerNote || '')}</textarea>
+                <button id="submit-${escapeHtml(diag.metadata.name)}" onclick="submitReview('${escapeHtml(diag.metadata.name)}')"${submitDisabled} style="padding:0.4rem 0.8rem;background:var(--accent-color);border:none;border-radius:3px;color:white;font-size:0.8rem;cursor:pointer;">Submit</button>
+            </div>
+        `;
 
         return `
             <tr>
@@ -515,6 +585,7 @@ function renderDiagnostics() {
                        <div id="${escapeHtml(detailsId)}" class="details-json" style="display:none"></div>`
                     : '<span style="color:var(--text-secondary);font-size:0.8rem;">None</span>'
                 }</td>
+                <td>${verdictContent}</td>
             </tr>`;
     }).join('');
 
@@ -534,12 +605,38 @@ function getDiagnosticTypeClass(type) {
     return 'badge-executing';
 }
 
+window.submitReview = async function(name) {
+    const verdict = document.getElementById(`verdict-${name}`).value;
+    const note = document.getElementById(`note-${name}`).value.trim();
+    const ns = state.namespace;
+
+    try {
+        const response = await fetch(`/api/agent-diagnostics/${encodeURIComponent(name)}/status?namespace=${encodeURIComponent(ns)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ verdict, reviewerNote: note })
+        });
+        if (!response.ok) {
+            const errText = await response.text();
+            alert('Failed to submit review: ' + errText);
+            return;
+        }
+        await loadDiagnostics();
+    } catch (e) {
+        alert('Failed to submit review: ' + e.message);
+    }
+};
+
 window.toggleDetails = function(id) {
     const el = document.getElementById(id);
     if (!el) return;
     el.style.display = el.style.display === 'none' ? 'block' : 'none';
     const btn = el.previousElementSibling;
-    if (btn) btn.textContent = el.style.display === 'none' ? 'View' : 'Hide';
+    if (btn) {
+        // Preserve the original label (View, Review, Edit…) on first toggle.
+        if (!btn.dataset.closedLabel) btn.dataset.closedLabel = btn.textContent;
+        btn.textContent = el.style.display === 'none' ? btn.dataset.closedLabel : 'Hide';
+    }
 };
 
 function formatAge(timestamp) {

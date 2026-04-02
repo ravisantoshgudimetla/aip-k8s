@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/ravisantoshgudimetla/aip-k8s/api/v1alpha1"
@@ -34,6 +35,12 @@ var (
 )
 
 const defaultNamespace = "default"
+
+const (
+	verdictCorrect   = "correct"
+	verdictPartial   = "partial"
+	verdictIncorrect = "incorrect"
+)
 
 // terminalPhases are AgentRequest phases that represent a resolved request.
 // Requests in these phases do not block a new attempt for the same intent.
@@ -183,6 +190,9 @@ func main() {
 	mux.HandleFunc("GET /agent-diagnostics", server.handleListAgentDiagnostics)
 	mux.HandleFunc("POST /agent-diagnostics", server.handleCreateAgentDiagnostic)
 	mux.HandleFunc("GET /agent-diagnostics/{name}", server.handleGetAgentDiagnostic)
+	mux.HandleFunc("PATCH /agent-diagnostics/{name}/status", server.handlePatchAgentDiagnosticStatus)
+	mux.HandleFunc("POST /agent-diagnostics/recompute-accuracy", server.handleRecomputeAccuracy)
+	mux.HandleFunc("GET /diagnostic-accuracy-summaries", server.handleListAccuracySummaries)
 
 	log.Printf("Starting AIP Demo Gateway on %s", *addr)
 	if err := http.ListenAndServe(*addr, loggingMiddleware(mux)); err != nil {
@@ -595,7 +605,259 @@ func (s *Server) handleGetAgentDiagnostic(w http.ResponseWriter, r *http.Request
 		"correlationID":  diag.Spec.CorrelationID,
 		"summary":        diag.Spec.Summary,
 		"details":        diag.Spec.Details,
+		"status":         diag.Status, // Added status so dashboard can read verdict
 	})
+}
+
+func (s *Server) handlePatchAgentDiagnosticStatus(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = defaultNamespace
+	}
+
+	var body struct {
+		Verdict      string `json:"verdict"`
+		ReviewerNote string `json:"reviewerNote,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if body.Verdict != verdictCorrect && body.Verdict != verdictIncorrect && body.Verdict != verdictPartial {
+		writeError(w, http.StatusBadRequest, "invalid verdict")
+		return
+	}
+
+	// reviewedBy is always set server-side from the upstream identity headers
+	// (injected by the service mesh / authenticating proxy). If neither header
+	// is present the gateway cannot establish caller identity and must refuse
+	// the request to prevent unauthorised or anonymous reviews.
+	caller := r.Header.Get("X-Remote-User")
+	if caller == "" {
+		caller = r.Header.Get("X-Forwarded-User")
+	}
+	if caller == "" {
+		writeError(w, http.StatusUnauthorized, "caller identity required: X-Remote-User or X-Forwarded-User header missing")
+		return
+	}
+
+	var diag v1alpha1.AgentDiagnostic
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &diag); err != nil {
+		if apierrors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, "AgentDiagnostic not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get AgentDiagnostic: %v", err))
+		}
+		return
+	}
+
+	oldVerdict := diag.Status.Verdict
+	now := metav1.Now()
+
+	patch := client.MergeFrom(diag.DeepCopy())
+	diag.Status.Verdict = body.Verdict
+	diag.Status.ReviewerNote = body.ReviewerNote
+	diag.Status.ReviewedBy = caller
+	diag.Status.ReviewedAt = &now
+
+	if err := s.client.Status().Patch(r.Context(), &diag, patch); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to patch status: %v", err))
+		return
+	}
+
+	agentId := diag.Spec.AgentIdentity
+	summaryName := sanitizeDNSSegment(agentId, 63)
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var summary v1alpha1.DiagnosticAccuracySummary
+		err := s.client.Get(r.Context(), types.NamespacedName{Name: summaryName, Namespace: ns}, &summary)
+		exists := true
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				exists = false
+				summary = v1alpha1.DiagnosticAccuracySummary{
+					ObjectMeta: metav1.ObjectMeta{Name: summaryName, Namespace: ns},
+					Spec:       v1alpha1.DiagnosticAccuracySummarySpec{AgentIdentity: agentId},
+				}
+			} else {
+				return err
+			}
+		}
+
+		if !exists {
+			if err := s.client.Create(r.Context(), &summary); err != nil {
+				return err
+			}
+			// When the summary CR is newly created its counters start at zero.
+			// We must not decrement oldVerdict even if the diagnostic already
+			// carries a verdict (e.g., after a manual summary deletion), or we
+			// would produce negative counts and an accuracy ratio above 1.0.
+			oldVerdict = ""
+		}
+
+		if oldVerdict != "" {
+			switch oldVerdict {
+			case verdictCorrect:
+				summary.Status.CorrectCount--
+			case verdictIncorrect:
+				summary.Status.IncorrectCount--
+			case verdictPartial:
+				summary.Status.PartialCount--
+			}
+			summary.Status.TotalReviewed--
+		}
+
+		switch body.Verdict {
+		case verdictCorrect:
+			summary.Status.CorrectCount++
+		case verdictIncorrect:
+			summary.Status.IncorrectCount++
+		case verdictPartial:
+			summary.Status.PartialCount++
+		}
+		summary.Status.TotalReviewed++
+
+		acc := float64(summary.Status.CorrectCount) + 0.5*float64(summary.Status.PartialCount)
+		if summary.Status.TotalReviewed > 0 {
+			val := acc / float64(summary.Status.TotalReviewed)
+			summary.Status.DiagnosticAccuracy = &val
+		} else {
+			summary.Status.DiagnosticAccuracy = nil
+		}
+		summary.Status.LastUpdatedAt = &now
+		return s.client.Status().Update(r.Context(), &summary)
+	})
+
+	if err != nil {
+		log.Printf("failed to update DiagnosticAccuracySummary for agent %q: %v", agentId, err)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"message": "verdict saved"})
+}
+
+func (s *Server) handleRecomputeAccuracy(w http.ResponseWriter, r *http.Request) {
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = defaultNamespace
+	}
+
+	agentId := r.URL.Query().Get("agentIdentity")
+
+	var list v1alpha1.AgentDiagnosticList
+	if err := s.client.List(r.Context(), &list, client.InNamespace(ns)); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	stats := make(map[string]*v1alpha1.DiagnosticAccuracySummary)
+	for _, item := range list.Items {
+		if agentId != "" && item.Spec.AgentIdentity != agentId {
+			continue
+		}
+		id := item.Spec.AgentIdentity
+		if item.Status.Verdict == "" {
+			continue
+		}
+
+		summaryName := sanitizeDNSSegment(id, 63)
+		summary, ok := stats[summaryName]
+		if !ok {
+			summary = &v1alpha1.DiagnosticAccuracySummary{
+				ObjectMeta: metav1.ObjectMeta{Name: summaryName, Namespace: ns},
+				Spec:       v1alpha1.DiagnosticAccuracySummarySpec{AgentIdentity: id},
+			}
+			stats[summaryName] = summary
+		}
+
+		switch item.Status.Verdict {
+		case verdictCorrect:
+			summary.Status.CorrectCount++
+		case verdictIncorrect:
+			summary.Status.IncorrectCount++
+		case verdictPartial:
+			summary.Status.PartialCount++
+		}
+		summary.Status.TotalReviewed++
+
+		reviewedAt := item.Status.ReviewedAt
+		if summary.Status.LastUpdatedAt == nil || (reviewedAt != nil && reviewedAt.After(summary.Status.LastUpdatedAt.Time)) {
+			summary.Status.LastUpdatedAt = reviewedAt
+		}
+	}
+
+	for id, summary := range stats {
+		acc := float64(summary.Status.CorrectCount) + 0.5*float64(summary.Status.PartialCount)
+		if summary.Status.TotalReviewed > 0 {
+			val := acc / float64(summary.Status.TotalReviewed)
+			summary.Status.DiagnosticAccuracy = &val
+		}
+
+		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			var existing v1alpha1.DiagnosticAccuracySummary
+			err := s.client.Get(r.Context(), types.NamespacedName{Name: id, Namespace: ns}, &existing)
+			if err != nil {
+				if apierrors.IsNotFound(err) {
+					if err := s.client.Create(r.Context(), summary); err != nil {
+						return err
+					}
+					return s.client.Status().Update(r.Context(), summary)
+				}
+				return err
+			}
+			existing.Status = summary.Status
+			return s.client.Status().Update(r.Context(), &existing)
+		})
+		if err != nil {
+			log.Printf("failed to upsert summary for %s: %v", id, err)
+		}
+	}
+
+	// Zero out summaries for agents that no longer have any reviewed diagnostics
+	// (e.g., after their diagnostics were deleted). Without this, a recompute
+	// would leave stale counts behind, defeating the recovery guarantee.
+	var existingSummaries v1alpha1.DiagnosticAccuracySummaryList
+	if err := s.client.List(r.Context(), &existingSummaries, client.InNamespace(ns)); err != nil {
+		log.Printf("failed to list existing summaries during recompute: %v", err)
+	} else {
+		for i := range existingSummaries.Items {
+			existing := &existingSummaries.Items[i]
+			if agentId != "" && existing.Spec.AgentIdentity != agentId {
+				continue
+			}
+			if _, ok := stats[existing.Name]; ok {
+				continue
+			}
+			err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				var fresh v1alpha1.DiagnosticAccuracySummary
+				if err := s.client.Get(r.Context(), types.NamespacedName{Name: existing.Name, Namespace: ns}, &fresh); err != nil {
+					return err
+				}
+				fresh.Status = v1alpha1.DiagnosticAccuracySummaryStatus{}
+				return s.client.Status().Update(r.Context(), &fresh)
+			})
+			if err != nil {
+				log.Printf("failed to zero stale summary %s: %v", existing.Name, err)
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"message": "recomputed accuracy summaries"})
+}
+
+func (s *Server) handleListAccuracySummaries(w http.ResponseWriter, r *http.Request) {
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = defaultNamespace
+	}
+
+	var list v1alpha1.DiagnosticAccuracySummaryList
+	if err := s.client.List(r.Context(), &list, client.InNamespace(ns)); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, list.Items)
 }
 
 func (s *Server) patchAgentRequestCondition(
