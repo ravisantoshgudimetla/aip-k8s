@@ -57,10 +57,11 @@ jobs:
             kind load docker-image ghcr.io/${{ github.repository }}/${img}:${{ steps.tag.outputs.sha }} --name chart-e2e
           done
 
+      - name: Export kubeconfig path
+        run: echo "KUBECONFIG=$HOME/.kube/config" >> "$GITHUB_ENV"
+
       - name: Run chart e2e tests
         run: make chart-e2e CHART_IMAGE_TAG=${{ steps.tag.outputs.sha }}
-        env:
-          KUBECONFIG: ${{ env.HOME }}/.kube/config
 
       - name: Dump logs on failure
         if: failure()
