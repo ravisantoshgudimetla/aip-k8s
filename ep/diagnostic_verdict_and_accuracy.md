@@ -63,9 +63,14 @@ A new Kind that stores running verdict counts and a computed accuracy ratio per 
 // DiagnosticAccuracySummarySpec identifies the agent this summary tracks.
 type DiagnosticAccuracySummarySpec struct {
     // AgentIdentity specifies the agent this summary tracks.
-    // Must be a valid DNS subdomain — the gateway uses a sanitized form of
-    // this value as the CR name, so non-DNS-safe characters are normalised
-    // before the CR is created or looked up.
+    // The gateway derives the CR name from this value using sanitizeDNSSegment:
+    //   1. Convert to lowercase
+    //   2. Replace any character outside [a-z0-9-] with '-'
+    //   3. Collapse consecutive hyphens to one
+    //   4. Trim leading/trailing hyphens
+    //   5. Truncate to 63 characters
+    // The raw agentIdentity is preserved in spec; the sanitized form is used
+    // only as the CR name for K8s API compliance.
     // +kubebuilder:validation:Required
     // +kubebuilder:validation:MinLength=1
     AgentIdentity string `json:"agentIdentity"`
@@ -74,15 +79,19 @@ type DiagnosticAccuracySummarySpec struct {
 type DiagnosticAccuracySummaryStatus struct {
     // TotalReviewed is the total number of AgentDiagnostic records
     // with a non-empty verdict for this agentIdentity.
+    // +kubebuilder:validation:Minimum=0
     TotalReviewed int64 `json:"totalReviewed"`
 
     // CorrectCount is the number of verdicts set to "correct".
+    // +kubebuilder:validation:Minimum=0
     CorrectCount int64 `json:"correctCount"`
 
     // PartialCount is the number of verdicts set to "partial".
+    // +kubebuilder:validation:Minimum=0
     PartialCount int64 `json:"partialCount"`
 
     // IncorrectCount is the number of verdicts set to "incorrect".
+    // +kubebuilder:validation:Minimum=0
     IncorrectCount int64 `json:"incorrectCount"`
 
     // DiagnosticAccuracy is the computed accuracy ratio:
@@ -128,7 +137,7 @@ status:
 
 ### Accuracy formula
 
-```
+```text
 diagnosticAccuracy = (correctCount + 0.5 × partialCount) / totalReviewed
 ```
 
@@ -145,7 +154,7 @@ The spec proposal in agent-intent-protocol#7 will advocate for this formula rath
 `PATCH /agent-diagnostics/{name}/status` executes a three-step write (one read, two writes):
 
 1. Read the existing `AgentDiagnostic` to capture the current verdict (may be empty) and `agentIdentity`.
-2. Patch the `AgentDiagnostic` status subresource with the new verdict, `reviewedBy` (from caller), and `reviewedAt` (server time).
+2. Patch the `AgentDiagnostic` status subresource with the new verdict, `reviewedBy` (from the authenticated caller's identity), and `reviewedAt` (server time).
 3. Upsert the `DiagnosticAccuracySummary` for the diagnostic's `agentIdentity`:
    - If old verdict was **empty** (first-time review): increment `totalReviewed` and the new verdict's counter.
    - If old verdict was **non-empty** (changing an existing verdict): decrement the old verdict's counter, increment the new verdict's counter. `totalReviewed` is unchanged — the diagnostic was already counted.
@@ -179,6 +188,7 @@ The diagnostics tab gains:
 | SRE / editor | `agentdiagnostics/status` | — (no access; reviews submitted via gateway HTTP API only) |
 | SRE / editor | `diagnosticaccuracysummaries` | `get`, `list`, `watch` |
 | SRE / editor | `diagnosticaccuracysummaries/status` | — (no access) |
+| Gateway service account | `agentdiagnostics` | `get`, `list` |
 | Gateway service account | `agentdiagnostics/status` | `update`, `patch` |
 | Gateway service account | `diagnosticaccuracysummaries` | `get`, `list`, `create` |
 | Gateway service account | `diagnosticaccuracysummaries/status` | `update`, `patch` |
@@ -194,11 +204,11 @@ The diagnostics tab gains:
 
 ## Implementation Checklist
 
-- [ ] Add `AgentDiagnosticStatus` struct to `api/v1alpha1/agentdiagnostic_types.go`; add `+kubebuilder:subresource:status` marker
+- [ ] Add `AgentDiagnosticStatus` struct to `api/v1alpha1/agentdiagnostic_types.go`; add `Status AgentDiagnosticStatus` field to `AgentDiagnostic`; add `+kubebuilder:subresource:status` marker to the `AgentDiagnostic` type
 - [ ] Add `DiagnosticAccuracySummary` type to `api/v1alpha1/`; add `+kubebuilder:subresource:status` marker
 - [ ] Run `make manifests generate` to regenerate CRDs and deep copy (manifests first, then generate)
 - [ ] Update RBAC roles: `agentdiagnostic_editor_role.yaml` must NOT grant `/status` write — remove `patch`/`update` from SRE/editor role; new `diagnosticaccuracysummary_editor_role.yaml` (read-only on `/status`)
-- [ ] Add gateway service account `ClusterRole` granting `update`/`patch` on `agentdiagnostics/status` and `diagnosticaccuracysummaries/status`, and `get`/`list`/`create` on `diagnosticaccuracysummaries`
+- [ ] Add gateway service account `ClusterRole` granting `get`/`list` on `agentdiagnostics`, `update`/`patch` on `agentdiagnostics/status`, `get`/`list`/`create` on `diagnosticaccuracysummaries`, and `update`/`patch` on `diagnosticaccuracysummaries/status`
 - [ ] Gateway: `PATCH /agent-diagnostics/{name}/status` handler with three-step write (read + two writes) and retry on 409 for summary upsert; use `sanitizeDNSSegment(agentIdentity, 63)` as the `DiagnosticAccuracySummary` CR name — never the raw `agentIdentity`
 - [ ] Gateway: `POST /agent-diagnostics/recompute-accuracy` handler (scan + reconstruct summary)
 - [ ] Dashboard: verdict badge column + inline review form
