@@ -56,18 +56,43 @@ type AgentDiagnosticSpec struct {
 	Details *apiextensionsv1.JSON `json:"details,omitempty"`
 }
 
+// AgentDiagnosticStatus defines the observed state of AgentDiagnostic.
+type AgentDiagnosticStatus struct {
+	// Verdict is the SRE's assessment of this diagnostic.
+	// +kubebuilder:validation:Enum=correct;incorrect;partial
+	// +optional
+	Verdict string `json:"verdict,omitempty"`
+
+	// ReviewedBy is the identity of the reviewer. Set server-side from the
+	// authenticated caller — never accepted from the request body.
+	// +optional
+	ReviewedBy string `json:"reviewedBy,omitempty"`
+
+	// ReviewedAt is the timestamp of the review. Set server-side.
+	// +optional
+	ReviewedAt *metav1.Time `json:"reviewedAt,omitempty"`
+
+	// ReviewerNote is an optional free-text annotation.
+	// +kubebuilder:validation:MaxLength=512
+	// +optional
+	ReviewerNote string `json:"reviewerNote,omitempty"`
+}
+
 // AgentDiagnostic is the Schema for agent-originated diagnostic records.
 // +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced
 // +kubebuilder:printcolumn:name="Agent",type=string,JSONPath=`.spec.agentIdentity`
 // +kubebuilder:printcolumn:name="Type",type=string,JSONPath=`.spec.diagnosticType`
+// +kubebuilder:printcolumn:name="Verdict",type="string",JSONPath=".status.verdict"
 // +kubebuilder:printcolumn:name="Summary",type=string,JSONPath=`.spec.summary`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type AgentDiagnostic struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec AgentDiagnosticSpec `json:"spec,omitempty"`
+	Spec   AgentDiagnosticSpec   `json:"spec,omitempty"`
+	Status AgentDiagnosticStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
