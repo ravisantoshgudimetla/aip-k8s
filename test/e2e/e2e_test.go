@@ -339,10 +339,14 @@ var _ = Describe("Manager", Ordered, func() {
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("waiting for Phase=Pending (initial reconcile)")
+			By("waiting for controller to pick up the request (Pending or fast-path Approved)")
+			// The controller may process the request faster than the poll
+			// interval in CI, transitioning through Pending before the first
+			// observation. Accept either phase here; the AuditRecord assertions
+			// below prove the Pending→Approved transition actually occurred.
 			Eventually(func() string {
 				return getAgentRequestPhase(reqName, reqNS)
-			}).Should(Equal("Pending"))
+			}).Should(Or(Equal("Pending"), Equal("Approved")))
 
 			By("waiting for Phase=Approved (policy evaluation auto-approves in Phase 2)")
 			Eventually(func() string {

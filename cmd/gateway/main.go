@@ -660,27 +660,29 @@ func (s *Server) handlePatchAgentDiagnosticStatus(w http.ResponseWriter, r *http
 		return
 	}
 
+	// Wrap the Get→mutate→Patch in RetryOnConflict so that concurrent verdict
+	// submissions each re-read the latest resourceVersion and recompute
+	// oldVerdict from the freshly fetched status — preventing stale oldVerdict
+	// from causing counter drift in the DiagnosticAccuracySummary.
 	var diag v1alpha1.AgentDiagnostic
-	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &diag); err != nil {
+	var oldVerdict string
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &diag); err != nil {
+			return err
+		}
+		oldVerdict = diag.Status.Verdict
+		now := metav1.Now()
+		base := diag.DeepCopy()
+		diag.Status.Verdict = body.Verdict
+		diag.Status.ReviewerNote = body.ReviewerNote
+		diag.Status.ReviewedBy = caller
+		diag.Status.ReviewedAt = &now
+		return s.client.Status().Patch(r.Context(), &diag,
+			client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+	}); err != nil {
 		if apierrors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, "AgentDiagnostic not found")
-		} else {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get AgentDiagnostic: %v", err))
-		}
-		return
-	}
-
-	oldVerdict := diag.Status.Verdict
-	now := metav1.Now()
-
-	patch := client.MergeFrom(diag.DeepCopy())
-	diag.Status.Verdict = body.Verdict
-	diag.Status.ReviewerNote = body.ReviewerNote
-	diag.Status.ReviewedBy = caller
-	diag.Status.ReviewedAt = &now
-
-	if err := s.client.Status().Patch(r.Context(), &diag, patch); err != nil {
-		if apierrors.IsInvalid(err) || apierrors.IsBadRequest(err) {
+		} else if apierrors.IsInvalid(err) || apierrors.IsBadRequest(err) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid status patch: %v", err))
 		} else {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to patch status: %v", err))
@@ -690,6 +692,7 @@ func (s *Server) handlePatchAgentDiagnosticStatus(w http.ResponseWriter, r *http
 
 	agentId := diag.Spec.AgentIdentity
 	summaryName := summaryNameForAgent(agentId)
+	summaryUpdatedAt := metav1.Now()
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var summary v1alpha1.DiagnosticAccuracySummary
 		err := s.client.Get(r.Context(), types.NamespacedName{Name: summaryName, Namespace: ns}, &summary)
@@ -756,7 +759,7 @@ func (s *Server) handlePatchAgentDiagnosticStatus(w http.ResponseWriter, r *http
 		} else {
 			summary.Status.DiagnosticAccuracy = nil
 		}
-		summary.Status.LastUpdatedAt = &now
+		summary.Status.LastUpdatedAt = &summaryUpdatedAt
 		return s.client.Status().Update(r.Context(), &summary)
 	})
 
