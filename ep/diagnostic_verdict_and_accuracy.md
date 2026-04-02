@@ -160,7 +160,7 @@ The spec proposal in agent-intent-protocol#7 will advocate for this formula rath
    - If old verdict was **non-empty** (changing an existing verdict): decrement the old verdict's counter, increment the new verdict's counter. `totalReviewed` is unchanged — the diagnostic was already counted.
    - Recompute `diagnosticAccuracy` ratio. Write with `resourceVersion` for optimistic concurrency.
 
-Step 3 is retried on `409 Conflict` (optimistic concurrency failure) using a short exponential backoff.
+Step 3 is retried on `409 Conflict` (optimistic concurrency failure) using `retry.DefaultRetry` from `k8s.io/client-go/util/retry`: 5 attempts, 10ms base duration, linear backoff with 10% jitter (~55ms total worst case). If all retries are exhausted the verdict is still persisted (step 2 succeeded) but the summary counters are stale — the recompute endpoint is the recovery path.
 
 #### Consistency trade-offs
 
