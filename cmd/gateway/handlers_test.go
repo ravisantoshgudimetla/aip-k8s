@@ -20,8 +20,12 @@ import (
 
 func newTestScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
-	_ = clientgoscheme.AddToScheme(s)
-	_ = v1alpha1.AddToScheme(s)
+	if err := clientgoscheme.AddToScheme(s); err != nil {
+		panic(err)
+	}
+	if err := v1alpha1.AddToScheme(s); err != nil {
+		panic(err)
+	}
 	return s
 }
 
@@ -58,6 +62,13 @@ func pendingAgentRequest(name, ns, agentIdentity string) *v1alpha1.AgentRequest 
 func approvedAgentRequest(name, ns, agentIdentity string) *v1alpha1.AgentRequest {
 	ar := pendingAgentRequest(name, ns, agentIdentity)
 	ar.Status.Phase = v1alpha1.PhaseApproved
+	return ar
+}
+
+//nolint:unparam // ns is always "default" in tests but kept for symmetry with pendingAgentRequest
+func executingAgentRequest(name, ns, agentIdentity string) *v1alpha1.AgentRequest {
+	ar := pendingAgentRequest(name, ns, agentIdentity)
+	ar.Status.Phase = v1alpha1.PhaseExecuting
 	return ar
 }
 
@@ -158,7 +169,9 @@ func TestExecutingByNonCreatorRejected(t *testing.T) {
 func TestCompletedByNonCreatorRejected(t *testing.T) {
 	g := gomega.NewWithT(t)
 
-	ar := approvedAgentRequest("req-5", "default", "agent-sub")
+	// Use PhaseExecuting so the phase check passes and only the creator-only
+	// authorization path determines the result — independent of check ordering.
+	ar := executingAgentRequest("req-5", "default", "agent-sub")
 	fc := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(ar).
 		WithStatusSubresource(&v1alpha1.AgentRequest{}).Build()
 	s := &Server{
