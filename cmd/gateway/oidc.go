@@ -19,7 +19,7 @@ type roleConfig struct {
 func newRoleConfig(agentList, reviewerList string) *roleConfig {
 	parse := func(s string) map[string]bool {
 		m := map[string]bool{}
-		for _, v := range strings.Split(s, ",") {
+		for v := range strings.SplitSeq(s, ",") {
 			if t := strings.TrimSpace(v); t != "" {
 				m[t] = true
 			}
@@ -101,8 +101,9 @@ func newOIDCMiddleware(ctx context.Context, issuerURL, audience string) (func(ht
 }
 
 func newProxyHeaderMiddleware(trustedCIDRs string) func(http.Handler) http.Handler {
-	var nets []*net.IPNet
-	for _, cidr := range strings.Split(trustedCIDRs, ",") {
+	parts := strings.Split(trustedCIDRs, ",")
+	nets := make([]*net.IPNet, 0, len(parts))
+	for _, cidr := range parts {
 		cidr = strings.TrimSpace(cidr)
 		if cidr == "" {
 			continue

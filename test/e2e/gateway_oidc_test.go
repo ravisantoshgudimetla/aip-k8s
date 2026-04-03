@@ -57,10 +57,16 @@ var _ = Describe("Phase 7: Gateway OIDC Authentication", Ordered, func() {
 		binPath := projDir + "/bin/gateway"
 		cmdPath := projDir + "/cmd/gateway"
 
-		// 2. Build gateway binary
-		cmd := exec.Command("go", "build", "-o", binPath, cmdPath)
+		By("ensuring governance CRDs are installed")
+		cmd := exec.Command("make", "install")
 		cmd.Dir = projDir
 		out, err := cmd.CombinedOutput()
+		Expect(err).NotTo(HaveOccurred(), "failed to install CRDs: %s", string(out))
+
+		// 2. Build gateway binary
+		cmd = exec.Command("go", "build", "-o", binPath, cmdPath)
+		cmd.Dir = projDir
+		out, err = cmd.CombinedOutput()
 		Expect(err).NotTo(HaveOccurred(), "failed to build gateway: %s", string(out))
 
 		// 3. Start gateway subprocess

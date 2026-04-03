@@ -125,16 +125,18 @@ func TestDifferentReviewerCanApprove(t *testing.T) {
 
 // --- Creator-only state transitions ---
 
+//nolint:dupl // structurally similar to TestCompletedByNonCreatorRejected
 func TestExecutingByNonCreatorRejected(t *testing.T) {
 	g := gomega.NewWithT(t)
 
 	ar := approvedAgentRequest("req-4", "default", "agent-sub")
 	// both "agent-sub" and "other-agent" are agents; the creator-only check
 	// must fire even when the caller has a valid agent role
+	fc := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(ar).
+		WithStatusSubresource(&v1alpha1.AgentRequest{}).Build()
 	s := &Server{
-		client:      fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(ar).
-			WithStatusSubresource(&v1alpha1.AgentRequest{}).Build(),
-		dedupWindow: 0,
+		client:       fc,
+		dedupWindow:  0,
 		roles:        newRoleConfig("agent-sub,other-agent", "reviewer-sub"),
 		authRequired: true,
 	}
@@ -152,14 +154,16 @@ func TestExecutingByNonCreatorRejected(t *testing.T) {
 	g.Expect(w.Body.String()).To(gomega.ContainSubstring("creating agent"))
 }
 
+//nolint:dupl // structurally similar to TestExecutingByNonCreatorRejected
 func TestCompletedByNonCreatorRejected(t *testing.T) {
 	g := gomega.NewWithT(t)
 
 	ar := approvedAgentRequest("req-5", "default", "agent-sub")
+	fc := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(ar).
+		WithStatusSubresource(&v1alpha1.AgentRequest{}).Build()
 	s := &Server{
-		client:      fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(ar).
-			WithStatusSubresource(&v1alpha1.AgentRequest{}).Build(),
-		dedupWindow: 0,
+		client:       fc,
+		dedupWindow:  0,
 		roles:        newRoleConfig("agent-sub,other-agent", "reviewer-sub"),
 		authRequired: true,
 	}
@@ -240,7 +244,8 @@ func TestReviewerCannotCreateRequest(t *testing.T) {
 	g := gomega.NewWithT(t)
 
 	s := newTestServer()
-	body := `{"agentIdentity":"reviewer-sub","action":"restart","targetURI":"k8s://default/deployment/foo","reason":"test","namespace":"default"}`
+	body := `{"agentIdentity":"reviewer-sub","action":"restart",` +
+		`"targetURI":"k8s://default/deployment/foo","reason":"test","namespace":"default"}`
 
 	req := httptest.NewRequest(http.MethodPost, "/agent-requests", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

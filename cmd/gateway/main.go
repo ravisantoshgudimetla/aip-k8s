@@ -34,11 +34,16 @@ var (
 	addr        = flag.String("addr", ":8080", "The address to listen on for HTTP requests")
 	dedupWindow = flag.Duration("dedup-window", 24*time.Hour,
 		"Duration within which duplicate active requests are rejected with 409. Set to 0 to disable.")
-	oidcIssuerURL     = flag.String("oidc-issuer-url", "", "OIDC provider URL. When set, Bearer token validation is required on all non-healthz endpoints.")
-	oidcAudience      = flag.String("oidc-audience", "aip-gateway", "Expected JWT aud claim.")
-	agentSubjects     = flag.String("agent-subjects", "", "Comma-separated JWT sub values permitted to act as agents.")
-	reviewerSubjects  = flag.String("reviewer-subjects", "", "Comma-separated JWT sub values permitted to act as reviewers.")
-	trustedProxyCIDRs = flag.String("trusted-proxy-cidrs", "", "Comma-separated CIDRs from which X-Remote-User/X-Forwarded-User headers are accepted. When empty, any source is trusted (dev only). Ignored when --oidc-issuer-url is set.")
+	oidcIssuerURL = flag.String("oidc-issuer-url", "",
+		"OIDC provider URL. When set, Bearer token validation is required on all non-healthz endpoints.")
+	oidcAudience = flag.String("oidc-audience", "aip-gateway",
+		"Expected JWT aud claim.")
+	agentSubjects = flag.String("agent-subjects", "",
+		"Comma-separated JWT sub values permitted to act as agents.")
+	reviewerSubjects = flag.String("reviewer-subjects", "",
+		"Comma-separated JWT sub values permitted to act as reviewers.")
+	trustedProxyCIDRs = flag.String("trusted-proxy-cidrs", "",
+		"Comma-separated CIDRs for proxy-header trust. Empty = any source (dev only). Ignored when --oidc-issuer-url is set.")
 )
 
 type contextKey string
@@ -510,6 +515,7 @@ func (s *Server) handleGetAgentRequest(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+//nolint:dupl // structurally similar to handleCompletedAgentRequest
 func (s *Server) handleExecutingAgentRequest(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
 
@@ -546,6 +552,7 @@ func (s *Server) handleExecutingAgentRequest(w http.ResponseWriter, r *http.Requ
 	s.patchAgentRequestCondition(w, r, v1alpha1.ConditionExecuting, "AgentStarted", "Agent is now executing action")
 }
 
+//nolint:dupl // structurally similar to handleExecutingAgentRequest
 func (s *Server) handleCompletedAgentRequest(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
 
@@ -891,6 +898,7 @@ func (s *Server) handlePatchAgentDiagnosticStatus(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusOK, map[string]any{"message": "verdict saved"})
 }
 
+//nolint:gocyclo // function scans and rebuilds accuracy summaries; complexity is inherent
 func (s *Server) handleRecomputeAccuracy(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
 
