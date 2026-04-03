@@ -54,6 +54,7 @@ func pendingAgentRequest(name, ns, agentIdentity string) *v1alpha1.AgentRequest 
 	return ar
 }
 
+//nolint:unparam // ns is always "default" in tests but kept for symmetry with pendingAgentRequest
 func approvedAgentRequest(name, ns, agentIdentity string) *v1alpha1.AgentRequest {
 	ar := pendingAgentRequest(name, ns, agentIdentity)
 	ar.Status.Phase = v1alpha1.PhaseApproved
@@ -196,6 +197,46 @@ func TestCreatorCanTransitionToExecuting(t *testing.T) {
 	s.handleExecutingAgentRequest(w, req)
 
 	g.Expect(w.Code).To(gomega.Equal(http.StatusOK))
+}
+
+func TestExecutingFromWrongPhaseRejected(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	// request is still Pending — agent cannot call /executing before approval
+	ar := pendingAgentRequest("req-8", "default", "agent-sub")
+	s := newTestServer(ar)
+	if err := s.client.Status().Update(context.Background(), ar); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/agent-requests/req-8/executing", nil)
+	req.SetPathValue("name", "req-8")
+	req = req.WithContext(withCallerSub(req.Context(), "agent-sub"))
+	w := httptest.NewRecorder()
+	s.handleExecutingAgentRequest(w, req)
+
+	g.Expect(w.Code).To(gomega.Equal(http.StatusConflict))
+	g.Expect(w.Body.String()).To(gomega.ContainSubstring("Approved"))
+}
+
+func TestCompletedFromWrongPhaseRejected(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	// request is Approved but not yet Executing — agent cannot skip to /completed
+	ar := approvedAgentRequest("req-9", "default", "agent-sub")
+	s := newTestServer(ar)
+	if err := s.client.Status().Update(context.Background(), ar); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/agent-requests/req-9/completed", nil)
+	req.SetPathValue("name", "req-9")
+	req = req.WithContext(withCallerSub(req.Context(), "agent-sub"))
+	w := httptest.NewRecorder()
+	s.handleCompletedAgentRequest(w, req)
+
+	g.Expect(w.Code).To(gomega.Equal(http.StatusConflict))
+	g.Expect(w.Body.String()).To(gomega.ContainSubstring("Executing"))
 }
 
 // --- Body size limit ---

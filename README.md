@@ -197,9 +197,9 @@ The gateway supports OIDC/JWT authentication. When enabled, every non-healthz re
 |------|---------|-------------|
 | `--oidc-issuer-url` | `""` | OIDC provider URL (e.g. `https://accounts.google.com`). When set, Bearer token validation is required. When unset, auth is disabled (dev/test only). |
 | `--oidc-audience` | `aip-gateway` | Expected JWT `aud` claim. |
-| `--agent-subjects` | `""` | Comma-separated JWT `sub` values permitted to create requests, record diagnostics, and transition state. When empty, any caller is permitted (dev/test only). |
-| `--reviewer-subjects` | `""` | Comma-separated JWT `sub` values permitted to approve/deny requests and write verdicts. When empty, any caller is permitted (dev/test only). |
-| `--trusted-proxy-cidrs` | `""` | CIDRs from which `X-Remote-User`/`X-Forwarded-User` headers are accepted. When empty, any source is trusted (dev/test only). Ignored when `--oidc-issuer-url` is set. |
+| `--agent-subjects` | `""` | Comma-separated JWT `sub` values permitted to create requests, record diagnostics, and transition state. Setting either `--agent-subjects` or `--reviewer-subjects` enables enforcement for **both** roles — open mode (any caller permitted) only applies when OIDC is unset and **both** allowlists are empty. When subjects are set without `--oidc-issuer-url`, `--trusted-proxy-cidrs` must also be set or the gateway will refuse to start. |
+| `--reviewer-subjects` | `""` | Comma-separated JWT `sub` values permitted to approve/deny requests and write verdicts. See `--agent-subjects` for open-mode and enforcement semantics. |
+| `--trusted-proxy-cidrs` | `""` | CIDRs from which `X-Remote-User`/`X-Forwarded-User` headers are accepted. **Required** when using `--agent-subjects`/`--reviewer-subjects` without `--oidc-issuer-url` (otherwise the gateway refuses to start). When empty and no subjects are configured, any source is trusted (dev/test only). Ignored when `--oidc-issuer-url` is set. |
 
 #### Authorization rules
 

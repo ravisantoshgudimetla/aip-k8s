@@ -192,6 +192,16 @@ func main() {
 
 	rc := newRoleConfig(*agentSubjects, *reviewerSubjects)
 	authRequired := *oidcIssuerURL != "" || *agentSubjects != "" || *reviewerSubjects != ""
+
+	// Refuse to start in a configuration where role allowlists are set but no trust boundary is
+	// defined: without --oidc-issuer-url, any client can forge X-Remote-User to claim any sub.
+	if authRequired && *oidcIssuerURL == "" && *trustedProxyCIDRs == "" {
+		log.Fatalf("insecure configuration: --agent-subjects or --reviewer-subjects is set but " +
+			"neither --oidc-issuer-url nor --trusted-proxy-cidrs is configured — " +
+			"any client can forge X-Remote-User headers; " +
+			"set --oidc-issuer-url for JWT validation or --trusted-proxy-cidrs to restrict proxy-header trust")
+	}
+
 	server := &Server{client: k8sClient, dedupWindow: *dedupWindow, roles: rc, authRequired: authRequired}
 	mux := http.NewServeMux()
 
@@ -225,7 +235,9 @@ func main() {
 
 	var authMiddleware func(http.Handler) http.Handler
 	if *oidcIssuerURL != "" {
-		mw, err := newOIDCMiddleware(context.Background(), *oidcIssuerURL, *oidcAudience)
+		discoverCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		mw, err := newOIDCMiddleware(discoverCtx, *oidcIssuerURL, *oidcAudience)
 		if err != nil {
 			log.Fatalf("OIDC setup failed: %v", err)
 		}
@@ -560,6 +572,12 @@ func (s *Server) handleExecutingAgentRequest(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if req.Status.Phase != v1alpha1.PhaseApproved {
+		writeError(w, http.StatusConflict,
+			fmt.Sprintf("request is in phase %q — can only transition to Executing from Approved", req.Status.Phase))
+		return
+	}
+
 	s.patchAgentRequestCondition(w, r, v1alpha1.ConditionExecuting, "AgentStarted", "Agent is now executing action")
 }
 
@@ -594,6 +612,12 @@ func (s *Server) handleCompletedAgentRequest(w http.ResponseWriter, r *http.Requ
 
 	if req.Spec.AgentIdentity != sub {
 		writeError(w, http.StatusForbidden, "forbidden: only the creating agent may transition this request")
+		return
+	}
+
+	if req.Status.Phase != v1alpha1.PhaseExecuting {
+		writeError(w, http.StatusConflict,
+			fmt.Sprintf("request is in phase %q — can only transition to Completed from Executing", req.Status.Phase))
 		return
 	}
 
