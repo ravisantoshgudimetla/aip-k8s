@@ -33,18 +33,20 @@ func newRoleConfig(agentList, reviewerList string) *roleConfig {
 }
 
 // isAgent returns true if sub is permitted to act as an agent.
-// When no agent subjects are configured, any caller is permitted (dev/test mode).
+// Open mode (both lists empty) permits any caller; once either list is non-empty
+// both roles are enforced so that partial configuration cannot leave one role open.
 func (rc *roleConfig) isAgent(sub string) bool {
-	if len(rc.agentSubs) == 0 {
+	if len(rc.agentSubs) == 0 && len(rc.reviewerSubs) == 0 {
 		return true
 	}
 	return rc.agentSubs[sub]
 }
 
 // isReviewer returns true if sub is permitted to act as a reviewer.
-// When no reviewer subjects are configured, any caller is permitted (dev/test mode).
+// Open mode (both lists empty) permits any caller; once either list is non-empty
+// both roles are enforced so that partial configuration cannot leave one role open.
 func (rc *roleConfig) isReviewer(sub string) bool {
-	if len(rc.reviewerSubs) == 0 {
+	if len(rc.agentSubs) == 0 && len(rc.reviewerSubs) == 0 {
 		return true
 	}
 	return rc.reviewerSubs[sub]

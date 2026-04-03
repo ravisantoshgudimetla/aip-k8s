@@ -86,7 +86,7 @@ curl http://localhost:8082/healthz   # → ok
 ```
 
 ### Prerequisites (for local development)
-- `go` version v1.22.0+
+- `go` version v1.24.0+
 - `docker` version 17.03+.
 - `kind` version v0.31.0+ (for local testing).
 - `kubectl` version v1.11.3+.
@@ -232,54 +232,15 @@ helm upgrade --install aip-k8s \
   --set gateway.auth.reviewerSubjects=sre1@example.com,sre2@example.com
 ```
 
-3. Agents attach a Bearer token when calling the gateway:
+3. Agents attach a Bearer token when calling the gateway. When auth is enabled, `agentIdentity` must equal the JWT `sub` claim of the token — the gateway rejects requests where they differ:
 
 ```sh
 TOKEN=$(gcloud auth print-identity-token --audiences=aip-gateway)
+# The agentIdentity value must match the `sub` claim in TOKEN (e.g. the service account email)
 curl -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"agentIdentity":"my-agent","action":"restart","targetURI":"...","reason":"...","namespace":"production"}' \
+     -d '{"agentIdentity":"<jwt-sub>","action":"restart","targetURI":"...","reason":"...","namespace":"production"}' \
      http://localhost:8080/agent-requests
-```
-
-#### Testing OIDC locally with Dex
-
-[Dex](https://dexidp.io) is the easiest way to run a real OIDC provider locally:
-
-```sh
-# 1. Install Dex
-helm repo add dex https://charts.dexidp.io
-helm install dex dex/dex --namespace dex --create-namespace \
-  --set config.issuer=http://localhost:5556 \
-  --set config.staticClients[0].id=aip-gateway \
-  --set config.staticClients[0].secret=aip-secret \
-  --set config.staticClients[0].redirectURIs[0]=http://localhost:8080/callback \
-  --set config.staticPasswords[0].email=agent@example.com \
-  --set "config.staticPasswords[0].hash=\$2y\$10\$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W" \
-  --set config.staticPasswords[0].userID=agent-id \
-  --set config.staticPasswords[0].username=agent
-
-kubectl port-forward -n dex svc/dex 5556:5556 &
-
-# 2. Start the gateway pointing at Dex
-./bin/gateway \
-  --addr :8080 \
-  --oidc-issuer-url http://localhost:5556 \
-  --oidc-audience aip-gateway \
-  --agent-subjects agent-id \
-  --reviewer-subjects reviewer-id
-
-# 3. Fetch a token (client_credentials or password grant depending on Dex config)
-TOKEN=$(curl -s -X POST http://localhost:5556/token \
-  -d grant_type=password \
-  -d client_id=aip-gateway \
-  -d client_secret=aip-secret \
-  -d username=agent@example.com \
-  -d password=password \
-  -d scope="openid" | jq -r .id_token)
-
-# 4. Call the gateway
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/agent-requests
 ```
 
 #### Proxy-header fallback (no OIDC)

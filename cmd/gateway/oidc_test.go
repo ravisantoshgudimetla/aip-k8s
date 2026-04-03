@@ -23,6 +23,12 @@ func TestRoleConfig(t *testing.T) {
 	open := newRoleConfig("", "")
 	g.Expect(open.isAgent("anyone")).To(gomega.BeTrue())
 	g.Expect(open.isReviewer("anyone")).To(gomega.BeTrue())
+
+	// partial configuration: once either list is non-empty both roles are enforced
+	partial := newRoleConfig("agent1", "")
+	g.Expect(partial.isAgent("agent1")).To(gomega.BeTrue())
+	g.Expect(partial.isAgent("anyone")).To(gomega.BeFalse())
+	g.Expect(partial.isReviewer("anyone")).To(gomega.BeFalse()) // no reviewer list configured → nobody is a reviewer
 }
 
 func TestRequireRole(t *testing.T) {

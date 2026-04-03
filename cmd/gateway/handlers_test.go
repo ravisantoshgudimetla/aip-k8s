@@ -119,8 +119,7 @@ func TestDifferentReviewerCanApprove(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.handleApproveAgentRequest(w, req)
 
-	// 200 = approval succeeded (or 409 if phase check triggers — either way not 403)
-	g.Expect(w.Code).NotTo(gomega.Equal(http.StatusForbidden))
+	g.Expect(w.Code).To(gomega.Equal(http.StatusOK))
 }
 
 // --- Creator-only state transitions ---
@@ -205,8 +204,13 @@ func TestOversizedBodyRejected(t *testing.T) {
 	g := gomega.NewWithT(t)
 
 	s := newTestServer()
-	// 1 MiB + 1 byte
-	bigBody := bytes.Repeat([]byte("x"), (1<<20)+1)
+	// Build a valid JSON body that exceeds 1 MiB so MaxBytesReader is the limiting factor,
+	// not a JSON syntax error from the very first byte.
+	inner := bytes.Repeat([]byte("x"), (1<<20)+1)
+	bigBody := make([]byte, 0, len(inner)+20)
+	bigBody = append(bigBody, []byte(`{"agentIdentity":"`)...)
+	bigBody = append(bigBody, inner...)
+	bigBody = append(bigBody, '"', '}')
 
 	req := httptest.NewRequest(http.MethodPost, "/agent-requests", bytes.NewReader(bigBody))
 	req.Header.Set("Content-Type", "application/json")

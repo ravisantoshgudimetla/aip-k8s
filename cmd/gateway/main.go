@@ -381,6 +381,11 @@ func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if s.authRequired && body.AgentIdentity != sub {
+		writeError(w, http.StatusBadRequest, "agentIdentity must match authenticated caller")
+		return
+	}
+
 	ns := body.Namespace
 	if ns == "" {
 		ns = defaultNamespace
@@ -480,6 +485,12 @@ func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleGetAgentRequest(w http.ResponseWriter, r *http.Request) {
+	sub := callerSubFromCtx(r.Context())
+	if s.authRequired && sub == "" {
+		writeError(w, http.StatusUnauthorized, "caller identity required")
+		return
+	}
+
 	name := r.PathValue("name")
 	ns := r.URL.Query().Get("namespace")
 	if ns == "" {
@@ -657,6 +668,11 @@ func (s *Server) handleCreateAgentDiagnostic(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if s.authRequired && body.AgentIdentity != sub {
+		writeError(w, http.StatusBadRequest, "agentIdentity must match authenticated caller")
+		return
+	}
+
 	ns := body.Namespace
 	if ns == "" {
 		ns = defaultNamespace
@@ -724,6 +740,12 @@ func (s *Server) handleCreateAgentDiagnostic(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleGetAgentDiagnostic(w http.ResponseWriter, r *http.Request) {
+	sub := callerSubFromCtx(r.Context())
+	if s.authRequired && sub == "" {
+		writeError(w, http.StatusUnauthorized, "caller identity required")
+		return
+	}
+
 	name := r.PathValue("name")
 	ns := r.URL.Query().Get("namespace")
 	if ns == "" {
@@ -1025,6 +1047,12 @@ func (s *Server) handleRecomputeAccuracy(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleListAccuracySummaries(w http.ResponseWriter, r *http.Request) {
+	sub := callerSubFromCtx(r.Context())
+	if s.authRequired && sub == "" {
+		writeError(w, http.StatusUnauthorized, "caller identity required")
+		return
+	}
+
 	ns := r.URL.Query().Get("namespace")
 	if ns == "" {
 		ns = defaultNamespace
@@ -1072,6 +1100,12 @@ func (s *Server) patchAgentRequestCondition(
 }
 
 func (s *Server) handleListAgentRequests(w http.ResponseWriter, r *http.Request) {
+	sub := callerSubFromCtx(r.Context())
+	if s.authRequired && sub == "" {
+		writeError(w, http.StatusUnauthorized, "caller identity required")
+		return
+	}
+
 	ns := r.URL.Query().Get("namespace")
 	if ns == "" {
 		ns = defaultNamespace
@@ -1092,6 +1126,12 @@ func (s *Server) handleListAgentRequests(w http.ResponseWriter, r *http.Request)
 
 //nolint:dupl // similar to handleListAgentDiagnostics
 func (s *Server) handleListAuditRecords(w http.ResponseWriter, r *http.Request) {
+	sub := callerSubFromCtx(r.Context())
+	if s.authRequired && sub == "" {
+		writeError(w, http.StatusUnauthorized, "caller identity required")
+		return
+	}
+
 	ns := r.URL.Query().Get("namespace")
 	if ns == "" {
 		ns = defaultNamespace
@@ -1119,6 +1159,12 @@ func (s *Server) handleListAuditRecords(w http.ResponseWriter, r *http.Request) 
 
 //nolint:dupl // similar to handleListAuditRecords
 func (s *Server) handleListAgentDiagnostics(w http.ResponseWriter, r *http.Request) {
+	sub := callerSubFromCtx(r.Context())
+	if s.authRequired && sub == "" {
+		writeError(w, http.StatusUnauthorized, "caller identity required")
+		return
+	}
+
 	ns := r.URL.Query().Get("namespace")
 	if ns == "" {
 		ns = defaultNamespace

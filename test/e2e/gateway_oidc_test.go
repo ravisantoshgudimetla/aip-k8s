@@ -134,7 +134,7 @@ var _ = Describe("Phase 7: Gateway OIDC Authentication", Ordered, func() {
 	It("Valid agent token — POST /agent-requests -> 201", func() {
 		token := oidcServer.mintToken("agent-sub", "aip-gateway", 5*time.Minute)
 		resp, err := gwPostWithToken(gwPort, "/agent-requests", `{
-			"agentIdentity": "gw-oidc-agent",
+			"agentIdentity": "agent-sub",
 			"action":        "gw-human-action",
 			"targetURI":     "k8s://dev/default/deployment/gw-oidc-app",
 			"reason":        "e2e tests"
