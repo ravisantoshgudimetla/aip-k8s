@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.23+
+- Go 1.24+
 - Docker
 - [kind](https://kind.sigs.k8s.io/) (`~/go/bin/kind` or on `$PATH`)
 - [kubectl](https://kubernetes.io/docs/tasks/tools/)
@@ -30,14 +30,14 @@ make lint           # golangci-lint
 
 ## Pre-merge e2e tests
 
-These tests run Phases 1–6 against a Kind cluster with the controller deployed:
+These tests run Phases 1–7 against a Kind cluster with the controller deployed:
 
 ```bash
 make test-e2e       # creates kind cluster, deploys controller, runs all e2e specs
 ```
 
-Phase 6 (Gateway API tests) builds the gateway binary as a subprocess automatically —
-no extra setup needed.
+Phase 6 (Gateway API tests) and Phase 7 (Gateway OIDC authentication) both build the
+gateway binary as a subprocess automatically — no extra setup needed.
 
 ## Chart e2e tests
 
