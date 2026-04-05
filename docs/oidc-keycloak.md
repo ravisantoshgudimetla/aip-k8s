@@ -239,7 +239,6 @@ Response:
 ```json
 {
   "access_token": "eyJhbGciOiJSUzI1NiIs...",
-  "id_token":     "eyJhbGciOiJSUzI1NiIs...",
   "token_type":   "Bearer",
   "expires_in":   300
 }
@@ -250,7 +249,7 @@ claims:
 
 ```bash
 TOKEN=eyJhbGciOiJSUzI1NiIs...
-echo $TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | python3 -m json.tool | grep -E '"iss"|"azp"|"aud"'
+echo $TOKEN | cut -d. -f2 | python3 -c "import sys,base64,json; p=sys.stdin.read().strip(); p+='='*(-len(p)%4); print(json.dumps(json.loads(base64.urlsafe_b64decode(p)), indent=2))" | grep -E '"iss"|"azp"|"aud"'
 ```
 
 Expected:
@@ -392,7 +391,7 @@ The token's `iss` does not match `--oidc-issuer-url`. Tokens fetched via
 port-forward carry the localhost URL. Fetch from inside the cluster instead.
 
 ```bash
-echo $AGENT_TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | python3 -m json.tool | grep '"iss"'
+echo $AGENT_TOKEN | cut -d. -f2 | python3 -c "import sys,base64,json; p=sys.stdin.read().strip(); p+='='*(-len(p)%4); print(json.dumps(json.loads(base64.urlsafe_b64decode(p)), indent=2))" | grep '"iss"'
 # Must equal: "http://keycloak.keycloak.svc.cluster.local:8080/realms/aip"
 ```
 
@@ -401,7 +400,7 @@ echo $AGENT_TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | python3 -m json.tool |
 The `azp` claim does not match any value in `--agent-subjects`. Decode the token:
 
 ```bash
-echo $AGENT_TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | python3 -m json.tool | grep '"azp"'
+echo $AGENT_TOKEN | cut -d. -f2 | python3 -c "import sys,base64,json; p=sys.stdin.read().strip(); p+='='*(-len(p)%4); print(json.dumps(json.loads(base64.urlsafe_b64decode(p)), indent=2))" | grep '"azp"'
 # Must equal the value in --agent-subjects, e.g. "aip-agent-1"
 ```
 
@@ -505,7 +504,7 @@ and inspect the claims before configuring the gateway:
 
 ```bash
 TOKEN=<your access_token>
-echo $TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | python3 -m json.tool
+echo $TOKEN | cut -d. -f2 | python3 -c "import sys,base64,json; p=sys.stdin.read().strip(); p+='='*(-len(p)%4); print(json.dumps(json.loads(base64.urlsafe_b64decode(p)), indent=2))"
 ```
 
 Look for a claim that consistently equals the client application's registered

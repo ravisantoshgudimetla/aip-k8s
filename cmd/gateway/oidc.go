@@ -72,7 +72,9 @@ func requireRole(rc *roleConfig, role, sub string, w http.ResponseWriter) bool {
 // identityClaim is the token claim used as the caller identity (e.g. "azp",
 // "sub", "appid", "email"). If the claim is absent the middleware falls back
 // to "sub".
-func newOIDCMiddleware(ctx context.Context, issuerURL, audience, identityClaim string) (func(http.Handler) http.Handler, error) {
+func newOIDCMiddleware(
+	ctx context.Context, issuerURL, audience, identityClaim string,
+) (func(http.Handler) http.Handler, error) {
 	provider, err := oidc.NewProvider(ctx, issuerURL)
 	if err != nil {
 		return nil, fmt.Errorf("oidc provider: %w", err)

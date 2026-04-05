@@ -75,22 +75,26 @@ var _ = Describe("Phase 8: Gateway Keycloak OIDC Integration", Ordered, func() {
 		By("configuring Keycloak realm and clients")
 		kcSetup(kcPort, kcRealm)
 
-		// 5. Wait for controller (Helm-deployed or kustomize-deployed)
+		// 5. Ensure controller is deployed (idempotent — Phase 1 may have done this already,
+		// but Ginkgo can randomize Describe block order so we cannot rely on it).
+		By("ensuring controller-manager is deployed")
+		checkCtrlCmd := exec.Command("kubectl", "get", "deployment",
+			"aip-k8s-controller-manager", "-n", "aip-k8s-system")
+		if _, checkErr := utils.Run(checkCtrlCmd); checkErr != nil {
+			deployCmd := exec.Command("make", "deploy",
+				fmt.Sprintf("IMG=%s", managerImage))
+			deployCmd.Dir = projDir
+			deployOut, deployErr := deployCmd.CombinedOutput()
+			Expect(deployErr).NotTo(HaveOccurred(), "deploy controller: %s", string(deployOut))
+		}
+
 		By("waiting for controller to be ready")
 		Eventually(func(g Gomega) {
-			// Try Helm-deployed controller first, fall back to kustomize label
 			readyCmd := exec.Command("kubectl", "get", "pods",
-				"-l", "app.kubernetes.io/component=controller",
+				"-l", "control-plane=controller-manager",
 				"-n", "aip-k8s-system",
 				"-o", `jsonpath={.items[0].status.conditions[?(@.type=="Ready")].status}`)
 			status, err := utils.Run(readyCmd)
-			if err != nil || status != "True" {
-				readyCmd = exec.Command("kubectl", "get", "pods",
-					"-l", "control-plane=controller-manager",
-					"-n", "aip-k8s-system",
-					"-o", `jsonpath={.items[0].status.conditions[?(@.type=="Ready")].status}`)
-				status, err = utils.Run(readyCmd)
-			}
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(status).To(Equal("True"), "controller pod not yet ready")
 		}, 2*time.Minute, 2*time.Second).Should(Succeed())
@@ -108,6 +112,7 @@ var _ = Describe("Phase 8: Gateway Keycloak OIDC Integration", Ordered, func() {
 			"--addr=:"+kc8GWPort,
 			"--oidc-issuer-url="+kcIssuer,
 			"--oidc-audience=aip-gateway",
+			"--oidc-identity-claim=azp",
 			"--agent-subjects=aip-agent-1",
 			"--reviewer-subjects=aip-reviewer-1",
 		)
@@ -300,7 +305,7 @@ func kcDo(method, rawURL, token string, body interface{}) {
 		"unexpected status for %s %s", method, rawURL)
 }
 
-// kcFetchToken obtains an id_token from Keycloak using the client_credentials grant.
+// kcFetchToken obtains an access_token from Keycloak using the client_credentials grant.
 func kcFetchToken(port, realm, clientID, secret string) string {
 	resp, err := http.PostForm( //nolint:noctx
 		fmt.Sprintf("http://localhost:%s/realms/%s/protocol/openid-connect/token", port, realm),

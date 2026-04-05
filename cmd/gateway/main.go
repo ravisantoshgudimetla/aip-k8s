@@ -38,9 +38,9 @@ var (
 		"OIDC provider URL. When set, Bearer token validation is required on all non-healthz endpoints.")
 	oidcAudience = flag.String("oidc-audience", "aip-gateway",
 		"Expected JWT aud claim.")
-	oidcIdentityClaim = flag.String("oidc-identity-claim", "azp",
-		"JWT claim used as the caller identity. Default 'azp' works for Keycloak client_credentials. "+
-			"Use 'sub' for Okta/standard flows, 'appid' for Azure AD, 'email' for Google service accounts. "+
+	oidcIdentityClaim = flag.String("oidc-identity-claim", "sub",
+		"JWT claim used as the caller identity. Default 'sub' is compatible with most OIDC providers. "+
+			"Use 'azp' for Keycloak client_credentials, 'appid' for Azure AD, 'email' for Google service accounts. "+
 			"Falls back to 'sub' if the configured claim is absent from the token.")
 	agentSubjects = flag.String("agent-subjects", "",
 		"Comma-separated identity values permitted to act as agents (matched against --oidc-identity-claim).")
