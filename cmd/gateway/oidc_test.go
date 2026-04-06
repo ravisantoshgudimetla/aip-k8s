@@ -11,7 +11,7 @@ import (
 func TestRoleConfig(t *testing.T) {
 	g := gomega.NewWithT(t)
 
-	rc := newRoleConfig("agent1, agent2", "reviewer1,reviewer2", "", "")
+	rc := newRoleConfig("agent1, agent2", "reviewer1,reviewer2", "admin1", "", "", "")
 
 	g.Expect(rc.isAgent("agent1", nil)).To(gomega.BeTrue())
 	g.Expect(rc.isAgent("agent3", nil)).To(gomega.BeFalse())
@@ -20,21 +20,23 @@ func TestRoleConfig(t *testing.T) {
 	g.Expect(rc.isReviewer("agent1", nil)).To(gomega.BeFalse())
 
 	// empty subject and group lists = open/dev mode: any caller is permitted
-	open := newRoleConfig("", "", "", "")
+	open := newRoleConfig("", "", "", "", "", "")
 	g.Expect(open.isAgent("anyone", nil)).To(gomega.BeTrue())
 	g.Expect(open.isReviewer("anyone", nil)).To(gomega.BeTrue())
+	g.Expect(open.isAdmin("anyone", nil)).To(gomega.BeTrue())
 
 	// partial configuration: once either list is non-empty both roles are enforced
-	partial := newRoleConfig("agent1", "", "", "")
+	partial := newRoleConfig("agent1", "", "", "", "", "")
 	g.Expect(partial.isAgent("agent1", nil)).To(gomega.BeTrue())
 	g.Expect(partial.isAgent("anyone", nil)).To(gomega.BeFalse())
 	g.Expect(partial.isReviewer("anyone", nil)).To(gomega.BeFalse()) // no reviewer list configured → nobody is a reviewer
+	g.Expect(partial.isAdmin("anyone", nil)).To(gomega.BeFalse())
 }
 
 func TestRoleConfigGroups(t *testing.T) {
 	g := gomega.NewWithT(t)
 
-	rc := newRoleConfig("", "", "infra-agents,ml-agents", "sre-team,platform-eng")
+	rc := newRoleConfig("", "", "", "infra-agents,ml-agents", "sre-team,platform-eng", "admin-group")
 
 	// group membership grants agent role
 	g.Expect(rc.isAgent("bot-123", []string{"infra-agents"})).To(gomega.BeTrue())
@@ -47,12 +49,18 @@ func TestRoleConfigGroups(t *testing.T) {
 	g.Expect(rc.isReviewer("alice", []string{"platform-eng"})).To(gomega.BeTrue())
 	g.Expect(rc.isReviewer("alice", []string{"dev-team"})).To(gomega.BeFalse())
 
+	// group membership grants admin role
+	g.Expect(rc.isAdmin("superuser", []string{"admin-group"})).To(gomega.BeTrue())
+	g.Expect(rc.isAdmin("superuser", []string{"other"})).To(gomega.BeFalse())
+
 	// subject match still works when groups are configured
-	rcMixed := newRoleConfig("named-agent", "named-reviewer", "infra-agents", "sre-team")
+	rcMixed := newRoleConfig("named-agent", "named-reviewer", "named-admin", "infra-agents", "sre-team", "admin-group")
 	g.Expect(rcMixed.isAgent("named-agent", nil)).To(gomega.BeTrue())
 	g.Expect(rcMixed.isAgent("bot-456", []string{"infra-agents"})).To(gomega.BeTrue())
 	g.Expect(rcMixed.isReviewer("named-reviewer", nil)).To(gomega.BeTrue())
 	g.Expect(rcMixed.isReviewer("alice", []string{"sre-team"})).To(gomega.BeTrue())
+	g.Expect(rcMixed.isAdmin("named-admin", nil)).To(gomega.BeTrue())
+	g.Expect(rcMixed.isAdmin("superuser", []string{"admin-group"})).To(gomega.BeTrue())
 
 	// only groups configured — open mode is NOT active (partial config enforces both roles)
 	g.Expect(rc.isAgent("anyone", nil)).To(gomega.BeFalse())
@@ -85,7 +93,7 @@ func TestClaimStringSlice(t *testing.T) {
 func TestRequireRole(t *testing.T) {
 	g := gomega.NewWithT(t)
 
-	rc := newRoleConfig("agent", "reviewer", "", "")
+	rc := newRoleConfig("agent", "reviewer", "admin", "", "", "")
 
 	cases := []struct {
 		name       string
@@ -99,6 +107,8 @@ func TestRequireRole(t *testing.T) {
 		{"invalid agent", "agent", "intruder", nil, http.StatusForbidden, false},
 		{"valid reviewer by sub", "reviewer", "reviewer", nil, http.StatusOK, true},
 		{"invalid reviewer", "reviewer", "agent", nil, http.StatusForbidden, false},
+		{"valid admin by sub", "admin", "admin", nil, http.StatusOK, true},
+		{"invalid admin", "admin", "reviewer", nil, http.StatusForbidden, false},
 	}
 
 	for _, tc := range cases {
@@ -113,7 +123,7 @@ func TestRequireRole(t *testing.T) {
 	}
 
 	// group-based requireRole
-	rcGroups := newRoleConfig("", "", "infra-agents", "sre-team")
+	rcGroups := newRoleConfig("", "", "", "infra-agents", "sre-team", "admin-group")
 	t.Run("agent via group", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		g.Expect(requireRole(rcGroups, "agent", "bot-1", []string{"infra-agents"}, w)).To(gomega.BeTrue())
@@ -121,6 +131,10 @@ func TestRequireRole(t *testing.T) {
 	t.Run("reviewer via group", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		g.Expect(requireRole(rcGroups, "reviewer", "alice", []string{"sre-team"}, w)).To(gomega.BeTrue())
+	})
+	t.Run("admin via group", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		g.Expect(requireRole(rcGroups, "admin", "superuser", []string{"admin-group"}, w)).To(gomega.BeTrue())
 	})
 	t.Run("wrong group denied", func(t *testing.T) {
 		w := httptest.NewRecorder()

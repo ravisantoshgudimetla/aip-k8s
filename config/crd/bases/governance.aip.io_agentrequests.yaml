@@ -362,6 +362,11 @@ spec:
                 type: string
               phase:
                 type: string
+              providerContext:
+                description: |-
+                  ProviderContext holds live resource state fetched by the context fetcher
+                  named in the matching GovernedResource. Schema is fetcher-specific.
+                x-kubernetes-preserve-unknown-fields: true
             type: object
         required:
         - spec

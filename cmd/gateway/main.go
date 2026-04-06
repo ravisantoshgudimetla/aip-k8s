@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -52,6 +53,13 @@ var (
 		"Comma-separated group names permitted to act as agents (matched against --oidc-groups-claim).")
 	reviewerGroups = flag.String("reviewer-groups", "",
 		"Comma-separated group names permitted to act as reviewers (matched against --oidc-groups-claim).")
+	adminSubjects = flag.String("admin-subjects", "",
+		"Comma-separated identity values permitted to act as admins (matched against --oidc-identity-claim).")
+	adminGroups = flag.String("admin-groups", "",
+		"Comma-separated group names permitted to act as admins (matched against --oidc-groups-claim).")
+	requireGovernedResource = flag.Bool("require-governed-resource", false,
+		"When true, reject AgentRequests even if no GovernedResource objects exist. "+
+			"Default false preserves backward compatibility for deployments without a populated registry.")
 	trustedProxyCIDRs = flag.String("trusted-proxy-cidrs", "",
 		"Comma-separated CIDRs for proxy-header trust. Empty = any source (dev only). Ignored when --oidc-issuer-url is set.")
 )
@@ -96,10 +104,11 @@ var terminalPhases = map[string]bool{
 }
 
 type Server struct {
-	client       client.Client
-	dedupWindow  time.Duration
-	roles        *roleConfig
-	authRequired bool // true when --oidc-issuer-url is set or any subject list is non-empty
+	client                  client.Client
+	dedupWindow             time.Duration
+	roles                   *roleConfig
+	authRequired            bool // true when --oidc-issuer-url is set or any subject list is non-empty
+	requireGovernedResource bool // from --require-governed-resource
 }
 
 type affectedTargetBody struct {
@@ -210,9 +219,9 @@ func main() {
 		log.Fatalf("Failed to create client: %v", err)
 	}
 
-	rc := newRoleConfig(*agentSubjects, *reviewerSubjects, *agentGroups, *reviewerGroups)
-	authRequired := *oidcIssuerURL != "" || *agentSubjects != "" || *reviewerSubjects != "" ||
-		*agentGroups != "" || *reviewerGroups != ""
+	rc := newRoleConfig(*agentSubjects, *reviewerSubjects, *adminSubjects, *agentGroups, *reviewerGroups, *adminGroups)
+	authRequired := *oidcIssuerURL != "" || *agentSubjects != "" || *reviewerSubjects != "" || *adminSubjects != "" ||
+		*agentGroups != "" || *reviewerGroups != "" || *adminGroups != ""
 
 	// Refuse to start in a configuration where role allowlists are set but no trust boundary is
 	// defined: without --oidc-issuer-url, any client can forge X-Remote-User to claim any sub.
@@ -223,7 +232,13 @@ func main() {
 			"set --oidc-issuer-url for JWT validation or --trusted-proxy-cidrs to restrict proxy-header trust")
 	}
 
-	server := &Server{client: k8sClient, dedupWindow: *dedupWindow, roles: rc, authRequired: authRequired}
+	server := &Server{
+		client:                  k8sClient,
+		dedupWindow:             *dedupWindow,
+		roles:                   rc,
+		authRequired:            authRequired,
+		requireGovernedResource: *requireGovernedResource,
+	}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -318,6 +333,30 @@ func buildReasoningTrace(body *createAgentRequestBody) *v1alpha1.ReasoningTrace 
 // Note: the List→Create sequence is not atomic. Concurrent requests with the
 // same key can both pass this check and both be created. This is intentional:
 // dedup provides best-effort protection against reconciliation-loop floods, not
+// matchGovernedResource returns the most specific GovernedResource whose URIPattern
+// matches targetURI using path.Match semantics. Most specific = longest pattern;
+// ties broken alphabetically by name. Returns nil if no pattern matches.
+func matchGovernedResource(items []v1alpha1.GovernedResource, targetURI string) *v1alpha1.GovernedResource {
+	var best *v1alpha1.GovernedResource
+	for i := range items {
+		gr := &items[i]
+		matched, err := path.Match(gr.Spec.URIPattern, targetURI)
+		if err != nil {
+			log.Printf("invalid URIPattern %q in GovernedResource %s: %v", gr.Spec.URIPattern, gr.Name, err)
+			continue
+		}
+		if !matched {
+			continue
+		}
+		if best == nil ||
+			len(gr.Spec.URIPattern) > len(best.Spec.URIPattern) ||
+			(len(gr.Spec.URIPattern) == len(best.Spec.URIPattern) && gr.Name < best.Name) {
+			best = gr
+		}
+	}
+	return best
+}
+
 // a hard mutual-exclusion guarantee. A strict guarantee would require a
 // ValidatingAdmissionWebhook or a unique server-side constraint.
 func (s *Server) checkDuplicate(
@@ -452,6 +491,55 @@ func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request
 			ScopeBounds:    body.ScopeBounds,
 		},
 	}
+
+	// GovernedResource admission: URI → agent identity → action (per design doc order).
+	var govResources v1alpha1.GovernedResourceList
+	if err := s.client.List(r.Context(), &govResources); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list GovernedResources: %v", err))
+		return
+	}
+
+	// Backward compat: skip check when no GovernedResources exist and flag is false.
+	if len(govResources.Items) == 0 && !s.requireGovernedResource {
+		goto admissionPassed
+	}
+
+	{
+		gr := matchGovernedResource(govResources.Items, body.TargetURI)
+		if gr == nil {
+			writeError(w, http.StatusForbidden, v1alpha1.DenialCodeActionNotPermitted)
+			return
+		}
+
+		// Check agent identity (step 3 in design doc).
+		if len(gr.Spec.PermittedAgents) > 0 {
+			agentPermitted := false
+			for _, a := range gr.Spec.PermittedAgents {
+				if a == body.AgentIdentity {
+					agentPermitted = true
+					break
+				}
+			}
+			if !agentPermitted {
+				writeError(w, http.StatusForbidden, v1alpha1.DenialCodeIdentityInvalid)
+				return
+			}
+		}
+
+		// Check action (step 4 in design doc).
+		actionPermitted := false
+		for _, a := range gr.Spec.PermittedActions {
+			if a == body.Action {
+				actionPermitted = true
+				break
+			}
+		}
+		if !actionPermitted {
+			writeError(w, http.StatusForbidden, v1alpha1.DenialCodeActionNotPermitted)
+			return
+		}
+	}
+admissionPassed:
 
 	if err := s.checkDuplicate(r, body.AgentIdentity, body.Action, body.TargetURI, ns, w); err != nil {
 		return

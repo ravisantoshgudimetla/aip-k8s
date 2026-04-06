@@ -14,11 +14,13 @@ import (
 type roleConfig struct {
 	agentSubs      map[string]bool
 	reviewerSubs   map[string]bool
+	adminSubs      map[string]bool
 	agentGroups    map[string]bool
 	reviewerGroups map[string]bool
+	adminGroups    map[string]bool
 }
 
-func newRoleConfig(agentList, reviewerList, agentGroupList, reviewerGroupList string) *roleConfig {
+func newRoleConfig(agentList, reviewerList, adminList, agentGroupList, reviewerGroupList, adminGroupList string) *roleConfig {
 	parse := func(s string) map[string]bool {
 		m := map[string]bool{}
 		for v := range strings.SplitSeq(s, ",") {
@@ -31,8 +33,10 @@ func newRoleConfig(agentList, reviewerList, agentGroupList, reviewerGroupList st
 	return &roleConfig{
 		agentSubs:      parse(agentList),
 		reviewerSubs:   parse(reviewerList),
+		adminSubs:      parse(adminList),
 		agentGroups:    parse(agentGroupList),
 		reviewerGroups: parse(reviewerGroupList),
+		adminGroups:    parse(adminGroupList),
 	}
 }
 
@@ -40,8 +44,8 @@ func newRoleConfig(agentList, reviewerList, agentGroupList, reviewerGroupList st
 // Once any list is non-empty all roles are enforced so that partial configuration
 // cannot leave one role open.
 func (rc *roleConfig) openMode() bool {
-	return len(rc.agentSubs) == 0 && len(rc.reviewerSubs) == 0 &&
-		len(rc.agentGroups) == 0 && len(rc.reviewerGroups) == 0
+	return len(rc.agentSubs) == 0 && len(rc.reviewerSubs) == 0 && len(rc.adminSubs) == 0 &&
+		len(rc.agentGroups) == 0 && len(rc.reviewerGroups) == 0 && len(rc.adminGroups) == 0
 }
 
 // isAgent returns true if sub or any of groups is permitted to act as an agent.
@@ -76,6 +80,22 @@ func (rc *roleConfig) isReviewer(sub string, groups []string) bool {
 	return false
 }
 
+// isAdmin returns true if sub or any of groups is permitted to act as an admin.
+func (rc *roleConfig) isAdmin(sub string, groups []string) bool {
+	if rc.openMode() {
+		return true
+	}
+	if rc.adminSubs[sub] {
+		return true
+	}
+	for _, g := range groups {
+		if rc.adminGroups[g] {
+			return true
+		}
+	}
+	return false
+}
+
 func requireRole(rc *roleConfig, role, sub string, groups []string, w http.ResponseWriter) bool {
 	switch role {
 	case "agent":
@@ -86,6 +106,11 @@ func requireRole(rc *roleConfig, role, sub string, groups []string, w http.Respo
 	case "reviewer":
 		if !rc.isReviewer(sub, groups) {
 			writeError(w, http.StatusForbidden, "reviewer role required")
+			return false
+		}
+	case "admin":
+		if !rc.isAdmin(sub, groups) {
+			writeError(w, http.StatusForbidden, "admin role required")
 			return false
 		}
 	default:

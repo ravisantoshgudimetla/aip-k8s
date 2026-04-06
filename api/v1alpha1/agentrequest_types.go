@@ -171,6 +171,11 @@ type AgentRequestStatus struct {
 	// human reviewers in the dashboard can see what AIP verified vs what the
 	// agent declared — the two sides of the governance decision.
 	ControlPlaneVerification *ControlPlaneVerification `json:"controlPlaneVerification,omitempty"`
+
+	// ProviderContext holds live resource state fetched by the context fetcher
+	// named in the matching GovernedResource. Schema is fetcher-specific.
+	// +optional
+	ProviderContext *apiextensionsv1.JSON `json:"providerContext,omitempty"`
 }
 
 // ControlPlaneVerification captures live cluster state that the AIP control
