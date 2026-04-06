@@ -128,11 +128,63 @@ spec:
   description: "Infrastructure repos. PRs opened by agents require platform engineering review."
 ```
 
+## URI Scheme
+
+All URIs submitted in `AgentRequest.spec.target.uri` and matched in `GovernedResource.spec.uriPattern` follow this canonical format:
+
+```
+<scheme>://<cluster-or-org>/<group-or-type>/<name-or-path>
+```
+
+Examples:
+- `k8s://prod/karpenter.sh/nodepool/team-a-workers` — Karpenter NodePool in the `prod` cluster
+- `k8s://prod/apps/deployment/default/payment-api` — Kubernetes Deployment, with namespace before name
+- `github://myorg/infra-platform` — GitHub repository
+
+Agents and `GovernedResource` authors must agree on which URI format they use. The gateway performs literal glob matching against whatever URI the agent provides — it does not normalise or parse URIs.
+
+## Glob Pattern Semantics
+
+`GovernedResource.spec.uriPattern` uses Go [`path.Match`](https://pkg.go.dev/path#Match) semantics:
+
+- `*` matches any sequence of non-`/` characters within a single path segment.
+- `?` matches any single non-`/` character.
+- `[...]` character classes are supported.
+- `**` is **not** supported. Use multiple patterns or a broader `*` match at the right segment.
+
+This is intentionally restrictive: a pattern like `k8s://prod/karpenter.sh/nodepool/*` matches `k8s://prod/karpenter.sh/nodepool/team-a-workers` but not `k8s://prod/karpenter.sh/nodepool/team-a/extra-segment`. Platform engineers must be explicit about the segment depth they intend to govern.
+
+## Backward Compatibility: Zero GovernedResources
+
+When the `GovernedResource` CRD is installed but no `GovernedResource` objects exist, the admission check would reject all `AgentRequest` submissions — a breaking change for existing deployments.
+
+The gateway flag `--require-governed-resource` (default `false`) controls this:
+
+- `false` (default): if the GovernedResource list is empty, skip the admission check. Existing deployments are unaffected.
+- `true`: enforce strictly — no `AgentRequest` is accepted unless a matching `GovernedResource` exists. Opt in when the registry is fully populated.
+
+Once at least one `GovernedResource` exists, the check is always enforced regardless of this flag. The flag only governs the zero-resources case.
+
+## Action Vocabulary
+
+`permittedActions` is free-form. There is no built-in registry of action names. This is intentional — governed resource types are heterogeneous and a shared vocabulary would become a maintenance burden.
+
+Convention: action strings should be lower-kebab-case verb phrases describing the mutation. The agent and the `GovernedResource` author must agree out-of-band on which strings to use.
+
+Recommended vocabulary for built-in fetcher types:
+
+| Fetcher | Recommended actions |
+|---|---|
+| `karpenter` | `scale-up`, `scale-down`, `update-limits` |
+| `github` | `open-pr`, `close-pr`, `merge-pr` |
+| `k8s-deployment` | `update`, `rollout-restart`, `scale` |
+
 ## Admission Enforcement
 
 When an `AgentRequest` is submitted, the gateway validates in order:
 
 1. **Resource is governed**: At least one `GovernedResource` URI pattern matches `spec.target.uri`. If none match → reject with `ACTION_NOT_PERMITTED`.
+   - **Zero-resources bypass**: if `--require-governed-resource=false` (default) and no `GovernedResource` objects exist, this check is skipped entirely.
    - **Multiple matches**: When multiple `GovernedResource` patterns match `spec.target.uri`, the gateway selects the single `GovernedResource` with the longest matching URI pattern (most-specific match). If multiple patterns have the same length, selection is stable-sorted by `metadata.name` (alphabetically) and the first is chosen. This ensures deterministic, reproducible admission decisions.
    - **Permission evaluation**: Once the matching `GovernedResource` is selected, only that resource's `permittedActions` and `permittedAgents` are evaluated. There is no union or aggregation across multiple matches — the single most-specific `GovernedResource` is authoritative.
 
@@ -219,14 +271,28 @@ Agent (runtime identity)
       Cannot create GovernedResource, SafetyPolicy, or approve requests
 ```
 
+## GovernedResource Status (Milestone 2)
+
+In milestone 1 the CRD has spec only. Operational visibility is deferred to milestone 2, when context fetchers are added:
+
+```go
+type GovernedResourceStatus struct {
+    // Conditions surfaces fetcher health and last-match events.
+    Conditions []metav1.Condition `json:"conditions,omitempty"`
+    // LastMatchedTime is the most recent time an AgentRequest matched this resource.
+    // +optional
+    LastMatchedTime *metav1.Time `json:"lastMatchedTime,omitempty"`
+}
+```
+
 ## Implementation Sequence
 
 | Step | What | Notes |
 |---|---|---|
-| 1 | Add `GovernedResource` CRD | `api/v1alpha1/governedresource_types.go` |
-| 2 | Add `--admin-subjects` flag to gateway | Mirrors existing `--agent-subjects` pattern |
-| 3 | Admission check in gateway | Validate URI + agent identity + action against `GovernedResource` list |
-| 4 | Add `ProviderContext` to `AgentRequestStatus` | `*apiextensionsv1.JSON`, additive change |
+| 1 | Add `GovernedResource` CRD | `api/v1alpha1/governedresource_types.go`; cluster-scoped, spec only |
+| 2 | Add `--admin-subjects` / `--admin-groups` flags to gateway | Mirrors `--agent-subjects` / `--agent-groups` pattern; admins may create GovernedResource and SafetyPolicy |
+| 3 | Admission check in gateway | URI glob match (`path.Match`) → agent identity → action; `--require-governed-resource` bypass; most-specific-match with alphabetical tiebreak |
+| 4 | Add `ProviderContext` to `AgentRequestStatus` | `*apiextensionsv1.JSON`, additive; `ControlPlaneVerification` retained |
 | 5 | Karpenter context fetcher in controller | Pure K8s client, no external credentials |
 | 6 | GitHub context fetcher in controller | Requires GitHub token Secret in cluster |
 | 7 | Update Helm chart and docs | |
