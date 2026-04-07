@@ -253,6 +253,7 @@ func main() {
 	mux.HandleFunc("PATCH /agent-diagnostics/{name}/status", server.handlePatchAgentDiagnosticStatus)
 	mux.HandleFunc("POST /agent-diagnostics/recompute-accuracy", server.handleRecomputeAccuracy)
 	mux.HandleFunc("GET /diagnostic-accuracy-summaries", server.handleListAccuracySummaries)
+	mux.Handle("GET /metrics", metricsHandler())
 
 	var authMiddleware func(http.Handler) http.Handler
 	if *oidcIssuerURL != "" {
@@ -268,7 +269,7 @@ func main() {
 	}
 
 	log.Printf("Starting AIP Demo Gateway on %s", *addr)
-	if err := http.ListenAndServe(*addr, loggingMiddleware(authMiddleware(mux))); err != nil {
+	if err := http.ListenAndServe(*addr, metricsMiddleware(loggingMiddleware(authMiddleware(mux)))); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }
