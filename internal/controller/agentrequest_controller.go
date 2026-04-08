@@ -18,13 +18,13 @@ package controller
 
 import (
 	"context"
-	"slices"
-	"strings"
 	"time"
 
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+
+	"k8s.io/apimachinery/pkg/labels"
 
 	coordinationv1 "k8s.io/api/coordination/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -37,8 +37,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"encoding/json"
+
 	governancev1alpha1 "github.com/ravisantoshgudimetla/aip-k8s/api/v1alpha1"
 	"github.com/ravisantoshgudimetla/aip-k8s/internal/evaluation"
+	"github.com/ravisantoshgudimetla/aip-k8s/internal/evaluation/fetchers"
+	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
 )
 
 // AgentRequestReconciler reconciles a AgentRequest object
@@ -68,8 +74,13 @@ func (r *AgentRequestReconciler) now() time.Time {
 // +kubebuilder:rbac:groups=governance.aip.io,resources=safetypolicies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=governance.aip.io,resources=auditrecords,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=governance.aip.io,resources=auditrecords/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=governance.aip.io,resources=governedresources,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
+// +kubebuilder:rbac:groups=karpenter.sh,resources=nodepools,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 
 func (r *AgentRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 
@@ -91,64 +102,30 @@ func (r *AgentRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// the resourceVersion since our Get.
 	statusPatch := client.MergeFrom(agentReq.DeepCopy())
 
-	// 1. Terminal state check
 	if agentReq.Status.Phase == governancev1alpha1.PhaseCompleted ||
-		agentReq.Status.Phase == governancev1alpha1.PhaseFailed {
+		agentReq.Status.Phase == governancev1alpha1.PhaseFailed ||
+		agentReq.Status.Phase == governancev1alpha1.PhaseDenied {
 		return ctrl.Result{}, nil
+	}
+
+	// 1.1 GovernedResource Integrity Check
+	if agentReq.Spec.GovernedResourceRef != nil {
+		if err := r.checkGovernedResourceIntegrity(ctx, &agentReq, statusPatch); err != nil {
+			return ctrl.Result{}, err
+		}
+		// If it denied the request, status was updated and audit records emitted.
+		// Return early to exit this reconcile.
+		if agentReq.Status.Phase == governancev1alpha1.PhaseDenied {
+			return ctrl.Result{}, nil
+		}
 	}
 
 	// 2. Check for Agent-triggered transitions
-	// Agent completed successfully
-	if meta.IsStatusConditionTrue(agentReq.Status.Conditions, governancev1alpha1.ConditionCompleted) && agentReq.Status.Phase != governancev1alpha1.PhaseCompleted {
-		fromPhase := agentReq.Status.Phase
-		agentReq.Status.Phase = governancev1alpha1.PhaseCompleted
-		if err := r.Status().Patch(ctx, &agentReq, statusPatch); err != nil {
-			return ctrl.Result{}, err
-		}
-		if err := r.releaseLock(ctx, &agentReq); err != nil {
-			return ctrl.Result{}, err
-		}
-		if err := r.emitAuditRecord(ctx, &agentReq, governancev1alpha1.AuditEventRequestCompleted, fromPhase, governancev1alpha1.PhaseCompleted); err != nil {
-			return ctrl.Result{}, err
-		}
-		if err := r.emitAuditRecord(ctx, &agentReq, governancev1alpha1.AuditEventLockReleased, "", ""); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{}, nil
+	handled, err := r.checkAgentTransitions(ctx, &agentReq, statusPatch)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
-
-	// Agent failed
-	if meta.IsStatusConditionTrue(agentReq.Status.Conditions, governancev1alpha1.ConditionFailed) && agentReq.Status.Phase != governancev1alpha1.PhaseFailed {
-		fromPhase := agentReq.Status.Phase
-		agentReq.Status.Phase = governancev1alpha1.PhaseFailed
-		if err := r.Status().Patch(ctx, &agentReq, statusPatch); err != nil {
-			return ctrl.Result{}, err
-		}
-		if err := r.releaseLock(ctx, &agentReq); err != nil {
-			return ctrl.Result{}, err
-		}
-		if err := r.emitAuditRecord(ctx, &agentReq, governancev1alpha1.AuditEventRequestFailed, fromPhase, governancev1alpha1.PhaseFailed); err != nil {
-			return ctrl.Result{}, err
-		}
-		if err := r.emitAuditRecord(ctx, &agentReq, governancev1alpha1.AuditEventLockReleased, "", ""); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{}, nil
-	}
-
-	// Agent signals it started executing
-	if meta.IsStatusConditionTrue(agentReq.Status.Conditions, governancev1alpha1.ConditionExecuting) && agentReq.Status.Phase == governancev1alpha1.PhaseApproved {
-		fromPhase := agentReq.Status.Phase
-		agentReq.Status.Phase = governancev1alpha1.PhaseExecuting
-		if err := r.Status().Patch(ctx, &agentReq, statusPatch); err != nil {
-			return ctrl.Result{}, err
-		}
-		if err := r.emitAuditRecord(ctx, &agentReq, governancev1alpha1.AuditEventLockAcquired, "", ""); err != nil {
-			return ctrl.Result{}, err
-		}
-		if err := r.emitAuditRecord(ctx, &agentReq, governancev1alpha1.AuditEventRequestExecuting, fromPhase, governancev1alpha1.PhaseExecuting); err != nil {
-			return ctrl.Result{}, err
-		}
+	if handled {
 		return ctrl.Result{}, nil
 	}
 
@@ -190,6 +167,121 @@ func (r *AgentRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	return ctrl.Result{}, nil
 }
 
+func (r *AgentRequestReconciler) checkGovernedResourceIntegrity(ctx context.Context, agentReq *governancev1alpha1.AgentRequest, statusPatch client.Patch) error {
+	var gr governancev1alpha1.GovernedResource
+	if err := r.Get(ctx, types.NamespacedName{Name: agentReq.Spec.GovernedResourceRef.Name}, &gr); err != nil {
+		if errors.IsNotFound(err) {
+			log.FromContext(ctx).Info("Denying AgentRequest because its GovernedResource was deleted", "name", agentReq.Name, "governedResource", agentReq.Spec.GovernedResourceRef.Name)
+			fromPhase := agentReq.Status.Phase
+			agentReq.Status.Phase = governancev1alpha1.PhaseDenied
+			agentReq.Status.Denial = &governancev1alpha1.DenialResponse{
+				Code:    governancev1alpha1.DenialCodeGovernedResourceDeleted,
+				Message: fmt.Sprintf("The GovernedResource %q that admitted this request was deleted.", agentReq.Spec.GovernedResourceRef.Name),
+			}
+			if err := r.Status().Patch(ctx, agentReq, statusPatch); err != nil {
+				return err
+			}
+			if err := r.releaseLock(ctx, agentReq); err != nil {
+				return err
+			}
+			if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventRequestDenied, fromPhase, governancev1alpha1.PhaseDenied); err != nil {
+				return err
+			}
+			return nil
+		}
+		return err
+	}
+
+	// Deny if the GovernedResource has been recreated or mutated (generation mismatch).
+	if gr.Generation != agentReq.Spec.GovernedResourceRef.Generation {
+		log.FromContext(ctx).Info("Denying AgentRequest due to GovernedResource generation mismatch",
+			"name", agentReq.Name,
+			"expectedGeneration", agentReq.Spec.GovernedResourceRef.Generation,
+			"currentGeneration", gr.Generation)
+		fromPhase := agentReq.Status.Phase
+		agentReq.Status.Phase = governancev1alpha1.PhaseDenied
+		agentReq.Status.Denial = &governancev1alpha1.DenialResponse{
+			Code: governancev1alpha1.DenialCodeGenerationMismatch,
+			Message: fmt.Sprintf(
+				"GovernedResource %q generation has changed (expected %d, current %d); the policy binding is no longer valid.",
+				agentReq.Spec.GovernedResourceRef.Name,
+				agentReq.Spec.GovernedResourceRef.Generation,
+				gr.Generation,
+			),
+		}
+		if err := r.Status().Patch(ctx, agentReq, statusPatch); err != nil {
+			return err
+		}
+		if err := r.releaseLock(ctx, agentReq); err != nil {
+			return err
+		}
+		if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventRequestDenied, fromPhase, governancev1alpha1.PhaseDenied); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	return nil
+}
+
+func (r *AgentRequestReconciler) checkAgentTransitions(ctx context.Context, agentReq *governancev1alpha1.AgentRequest, statusPatch client.Patch) (bool, error) {
+	// Agent completed successfully
+	if meta.IsStatusConditionTrue(agentReq.Status.Conditions, governancev1alpha1.ConditionCompleted) && agentReq.Status.Phase != governancev1alpha1.PhaseCompleted {
+		fromPhase := agentReq.Status.Phase
+		agentReq.Status.Phase = governancev1alpha1.PhaseCompleted
+		if err := r.Status().Patch(ctx, agentReq, statusPatch); err != nil {
+			return false, err
+		}
+		if err := r.releaseLock(ctx, agentReq); err != nil {
+			return false, err
+		}
+		if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventRequestCompleted, fromPhase, governancev1alpha1.PhaseCompleted); err != nil {
+			return false, err
+		}
+		if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventLockReleased, "", ""); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	// Agent failed
+	if meta.IsStatusConditionTrue(agentReq.Status.Conditions, governancev1alpha1.ConditionFailed) && agentReq.Status.Phase != governancev1alpha1.PhaseFailed {
+		fromPhase := agentReq.Status.Phase
+		agentReq.Status.Phase = governancev1alpha1.PhaseFailed
+		if err := r.Status().Patch(ctx, agentReq, statusPatch); err != nil {
+			return false, err
+		}
+		if err := r.releaseLock(ctx, agentReq); err != nil {
+			return false, err
+		}
+		if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventRequestFailed, fromPhase, governancev1alpha1.PhaseFailed); err != nil {
+			return false, err
+		}
+		if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventLockReleased, "", ""); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	// Agent signals it started executing
+	if meta.IsStatusConditionTrue(agentReq.Status.Conditions, governancev1alpha1.ConditionExecuting) && agentReq.Status.Phase == governancev1alpha1.PhaseApproved {
+		fromPhase := agentReq.Status.Phase
+		agentReq.Status.Phase = governancev1alpha1.PhaseExecuting
+		if err := r.Status().Patch(ctx, agentReq, statusPatch); err != nil {
+			return false, err
+		}
+		if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventLockAcquired, "", ""); err != nil {
+			return false, err
+		}
+		if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventRequestExecuting, fromPhase, governancev1alpha1.PhaseExecuting); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	return false, nil
+}
+
 func generateLeaseName(targetURI string) string {
 	hash := sha256.Sum256([]byte(targetURI))
 	hexHash := hex.EncodeToString(hash[:])
@@ -201,57 +293,12 @@ func generateLeaseName(targetURI string) string {
 	return name
 }
 
-func matchesSelector(req *governancev1alpha1.AgentRequest, policy *governancev1alpha1.SafetyPolicy) bool {
-	sel := policy.Spec.TargetSelector
-
-	if len(sel.MatchActions) > 0 {
-		matchedAction := false
-		for _, a := range sel.MatchActions {
-			if a == req.Spec.Action {
-				matchedAction = true
-				break
-			}
-			// Special handling for namespaced actions: <domain>/<action>
-			// Allow "deploy" to match "kiro/deploy"
-			if strings.Contains(req.Spec.Action, "/") {
-				parts := strings.Split(req.Spec.Action, "/")
-				if len(parts) == 2 && parts[1] == a {
-					matchedAction = true
-					break
-				}
-			}
-		}
-		if !matchedAction {
-			return false
-		}
+func matchesSelector(grLabels map[string]string, policy *governancev1alpha1.SafetyPolicy) bool {
+	selector, err := metav1.LabelSelectorAsSelector(&policy.Spec.GovernedResourceSelector)
+	if err != nil {
+		return false
 	}
-
-	if len(sel.MatchResourceTypes) > 0 {
-		matchedRT := false
-		reqRT := ""
-		if req.Spec.Target.ResourceType != nil {
-			reqRT = *req.Spec.Target.ResourceType
-		}
-		if slices.Contains(sel.MatchResourceTypes, reqRT) {
-			matchedRT = true
-		}
-		if !matchedRT {
-			return false
-		}
-	}
-
-	if len(sel.MatchAttributes) > 0 {
-		if req.Spec.Target.Attributes == nil {
-			return false
-		}
-		for k, v := range sel.MatchAttributes {
-			if reqVal, ok := req.Spec.Target.Attributes[k]; !ok || reqVal != v {
-				return false
-			}
-		}
-	}
-
-	return true
+	return selector.Matches(labels.Set(grLabels))
 }
 
 func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, agentReq *governancev1alpha1.AgentRequest, statusPatch client.Patch) (ctrl.Result, error) {
@@ -266,39 +313,7 @@ func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, agentReq 
 	if policyEvaluated {
 		// If it's blocked on approval, check spec for a human decision
 		if requiresApproval {
-			if agentReq.Spec.HumanApproval != nil {
-				fromPhase := agentReq.Status.Phase
-
-				// 5. If same (or Re-eval returned Allow), proceed
-				switch agentReq.Spec.HumanApproval.Decision {
-				case "approved":
-					logger.Info("Human approved AgentRequest via spec", "name", agentReq.Name)
-					meta.RemoveStatusCondition(&agentReq.Status.Conditions, governancev1alpha1.ConditionRequiresApproval)
-					return r.handleLockAcquisition(ctx, agentReq, fromPhase, statusPatch)
-				case "denied":
-					logger.Info("Human denied AgentRequest via spec", "name", agentReq.Name)
-					agentReq.Status.Phase = governancev1alpha1.PhaseDenied
-					agentReq.Status.Denial = &governancev1alpha1.DenialResponse{
-						Code:    governancev1alpha1.DenialCodePolicyViolation,
-						Message: "Denied by human reviewer",
-					}
-					meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{
-						Type:    governancev1alpha1.ConditionApproved,
-						Status:  metav1.ConditionFalse,
-						Reason:  "ManualDenial",
-						Message: "Denied by human reviewer",
-					})
-					if err := r.Status().Patch(ctx, agentReq, statusPatch); err != nil {
-						return ctrl.Result{}, err
-					}
-					if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventRequestDenied, fromPhase, governancev1alpha1.PhaseDenied); err != nil {
-						return ctrl.Result{}, err
-					}
-					return ctrl.Result{}, nil
-				}
-			}
-			logger.Info("AgentRequest awaiting manual approval", "name", agentReq.Name)
-			return ctrl.Result{}, nil
+			return r.handleApprovalWait(ctx, agentReq, statusPatch)
 		}
 		// Otherwise, it must have been an "Allow" result and we're now in lock acquisition mode
 		fromPhase := agentReq.Status.Phase // Should be Pending
@@ -319,9 +334,29 @@ func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, agentReq 
 		return ctrl.Result{}, err
 	}
 
+	var (
+		hasGovernedResource bool
+		grLabels            map[string]string
+	)
+	if agentReq.Spec.GovernedResourceRef != nil {
+		var gr governancev1alpha1.GovernedResource
+		if err := reader.Get(ctx, types.NamespacedName{Name: agentReq.Spec.GovernedResourceRef.Name}, &gr); err != nil {
+			logger.Error(err, "Failed to get GovernedResource for policy matching", "name", agentReq.Spec.GovernedResourceRef.Name)
+			return ctrl.Result{}, err
+		}
+		hasGovernedResource = true
+		grLabels = gr.Labels
+		if grLabels == nil {
+			grLabels = map[string]string{}
+		}
+	}
+
 	evalOpts := []governancev1alpha1.SafetyPolicy{}
 	for _, p := range policyList.Items {
-		if matchesSelector(agentReq, &p) {
+		// Evaluate policy if:
+		// - There's no GovernedResource (global policy evaluation), OR
+		// - There's a GovernedResource and it matches the policy's selector
+		if !hasGovernedResource || matchesSelector(grLabels, &p) {
 			evalOpts = append(evalOpts, p)
 		}
 	}
@@ -329,6 +364,21 @@ func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, agentReq 
 	targetCtx, cascadeCtxs, err := r.fetchTargetContext(ctx, agentReq)
 	if err != nil {
 		logger.Error(err, "Failed to fetch target context, proceeding with empty context")
+	}
+
+	// Step 1 - Fetch Provider Context based on GovernedResource
+	if agentReq.Spec.GovernedResourceRef != nil {
+		var gr governancev1alpha1.GovernedResource
+		if err := reader.Get(ctx, types.NamespacedName{Name: agentReq.Spec.GovernedResourceRef.Name}, &gr); err != nil {
+			logger.Error(err, "Failed to get GovernedResource for provider context", "name", agentReq.Spec.GovernedResourceRef.Name)
+			return ctrl.Result{}, err
+		}
+		providerCtx, err := r.fetchContextFromProvider(ctx, agentReq, &gr)
+		if err != nil {
+			logger.Error(err, "Provider context fetch failed")
+		} else if providerCtx != nil {
+			agentReq.Status.ProviderContext = providerCtx
+		}
 	}
 
 	// Persist what the control plane verified so the dashboard can show
@@ -389,6 +439,48 @@ func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, agentReq 
 		logger.Error(err, "Failed to set owner reference for policy.evaluated AuditRecord")
 	}
 
+	return r.handleEvaluationResult(ctx, agentReq, statusPatch, result, policyEvalAudit)
+}
+
+func (r *AgentRequestReconciler) handleApprovalWait(ctx context.Context, agentReq *governancev1alpha1.AgentRequest, statusPatch client.Patch) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+	if agentReq.Spec.HumanApproval != nil {
+		fromPhase := agentReq.Status.Phase
+
+		// 5. If same (or Re-eval returned Allow), proceed
+		switch agentReq.Spec.HumanApproval.Decision {
+		case "approved":
+			logger.Info("Human approved AgentRequest via spec", "name", agentReq.Name)
+			meta.RemoveStatusCondition(&agentReq.Status.Conditions, governancev1alpha1.ConditionRequiresApproval)
+			return r.handleLockAcquisition(ctx, agentReq, fromPhase, statusPatch)
+		case "denied":
+			logger.Info("Human denied AgentRequest via spec", "name", agentReq.Name)
+			agentReq.Status.Phase = governancev1alpha1.PhaseDenied
+			agentReq.Status.Denial = &governancev1alpha1.DenialResponse{
+				Code:    governancev1alpha1.DenialCodePolicyViolation,
+				Message: "Denied by human reviewer",
+			}
+			meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{
+				Type:    governancev1alpha1.ConditionApproved,
+				Status:  metav1.ConditionFalse,
+				Reason:  "ManualDenial",
+				Message: "Denied by human reviewer",
+			})
+			if err := r.Status().Patch(ctx, agentReq, statusPatch); err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventRequestDenied, fromPhase, governancev1alpha1.PhaseDenied); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
+		}
+	}
+	logger.Info("AgentRequest awaiting manual approval", "name", agentReq.Name)
+	return ctrl.Result{}, nil
+}
+
+func (r *AgentRequestReconciler) handleEvaluationResult(ctx context.Context, agentReq *governancev1alpha1.AgentRequest, statusPatch client.Patch, result *evaluation.Result, policyEvalAudit *governancev1alpha1.AuditRecord) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
 	fromPhase := agentReq.Status.Phase
 
 	switch result.Action {
@@ -722,6 +814,70 @@ func (r *AgentRequestReconciler) fetchTargetContext(ctx context.Context, agentRe
 	}
 
 	return targetCtx, cascadeCtxs, nil
+}
+
+// fetchContextFromProvider dispatches to the named fetcher and performs runtime schema validation.
+func (r *AgentRequestReconciler) fetchContextFromProvider(ctx context.Context, agentReq *governancev1alpha1.AgentRequest, gr *governancev1alpha1.GovernedResource) (*apiextensionsv1.JSON, error) {
+	fetcherName := gr.Spec.ContextFetcher
+	if fetcherName == "" || fetcherName == "none" {
+		return nil, nil
+	}
+
+	var fetcher func(context.Context, client.Client, string) (*apiextensionsv1.JSON, error)
+	switch fetcherName {
+	case "k8s-deployment":
+		fetcher = fetchers.FetchK8sDeployment
+	case "karpenter":
+		fetcher = fetchers.FetchKarpenter
+	case "github":
+		fetcher = fetchers.FetchGitHub
+	default:
+		return nil, fmt.Errorf("unknown fetcher: %s", fetcherName)
+	}
+
+	fetchedJSON, err := fetcher(ctx, r.Client, agentReq.Spec.Target.URI)
+	if err != nil {
+		return nil, err
+	}
+
+	if gr.Spec.ContextSchema != nil {
+		// 1. Decode contextSchema JSON into structural schema
+		var propsv1 apiextensionsv1.JSONSchemaProps
+		if err := json.Unmarshal(gr.Spec.ContextSchema.Raw, &propsv1); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal contextSchema: %w", err)
+		}
+
+		var props apiextensions.JSONSchemaProps
+		if err := apiextensionsv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(&propsv1, &props, nil); err != nil {
+			return nil, fmt.Errorf("failed to convert schema: %w", err)
+		}
+
+		// 2. Wrap in validator
+		validator, _, err := validation.NewSchemaValidator(&props)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create schema validator: %w", err)
+		}
+
+		// 3. Validate the fetched JSON against it
+		var obj any
+		if err := json.Unmarshal(fetchedJSON.Raw, &obj); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal fetched JSON: %w", err)
+		}
+
+		res := validator.Validate(obj)
+		if !res.IsValid() {
+			// Validation fails
+			meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{
+				Type:    "FetcherSchemaViolation",
+				Status:  metav1.ConditionTrue,
+				Reason:  "SchemaMismatch",
+				Message: fmt.Sprintf("fetcher '%s' returned invalid JSON: %v", fetcherName, res.Errors[0]),
+			})
+			return nil, nil
+		}
+	}
+
+	return fetchedJSON, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
