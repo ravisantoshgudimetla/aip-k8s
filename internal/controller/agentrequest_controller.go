@@ -353,9 +353,10 @@ func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, agentReq 
 
 	evalOpts := []governancev1alpha1.SafetyPolicy{}
 	for _, p := range policyList.Items {
-		// If we have no GR, or the policy doesn't match the GR labels, skip it.
-		// NOTE: In the new model, policies only apply to requests governed by a matched GR.
-		if hasGovernedResource && matchesSelector(grLabels, &p) {
+		// Evaluate policy if:
+		// - There's no GovernedResource (global policy evaluation), OR
+		// - There's a GovernedResource and it matches the policy's selector
+		if !hasGovernedResource || matchesSelector(grLabels, &p) {
 			evalOpts = append(evalOpts, p)
 		}
 	}
