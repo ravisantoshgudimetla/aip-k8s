@@ -105,6 +105,24 @@ spec:
                 - single
                 - scoped
                 type: string
+              governedResourceRef:
+                description: |-
+                  GovernedResourceRef records which GovernedResource admitted this AgentRequest.
+                  Set by the gateway at admission time. Immutable after creation.
+                  Empty only when --require-governed-resource=false and no GovernedResources exist.
+                properties:
+                  generation:
+                    format: int64
+                    type: integer
+                  name:
+                    type: string
+                required:
+                - generation
+                - name
+                type: object
+                x-kubernetes-validations:
+                - message: governedResourceRef is immutable after creation
+                  rule: self == oldSelf
               humanApproval:
                 description: |-
                   HumanApproval holds the human reviewer's decision when a policy requires manual approval.
@@ -333,6 +351,11 @@ spec:
                   policyResults:
                     items:
                       properties:
+                        policyGeneration:
+                          description: PolicyGeneration records the generation of
+                            the policy at the time of evaluation.
+                          format: int64
+                          type: integer
                         policyName:
                           type: string
                         result:
@@ -362,6 +385,11 @@ spec:
                 type: string
               phase:
                 type: string
+              providerContext:
+                description: |-
+                  ProviderContext holds live resource state fetched by the context fetcher
+                  named in the matching GovernedResource. Schema is fetcher-specific.
+                x-kubernetes-preserve-unknown-fields: true
             type: object
         required:
         - spec

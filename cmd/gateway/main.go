@@ -9,8 +9,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -52,6 +54,13 @@ var (
 		"Comma-separated group names permitted to act as agents (matched against --oidc-groups-claim).")
 	reviewerGroups = flag.String("reviewer-groups", "",
 		"Comma-separated group names permitted to act as reviewers (matched against --oidc-groups-claim).")
+	adminSubjects = flag.String("admin-subjects", "",
+		"Comma-separated identity values permitted to act as admins (matched against --oidc-identity-claim).")
+	adminGroups = flag.String("admin-groups", "",
+		"Comma-separated group names permitted to act as admins (matched against --oidc-groups-claim).")
+	requireGovernedResource = flag.Bool("require-governed-resource", false,
+		"When true, reject AgentRequests even if no GovernedResource objects exist. "+
+			"Default false preserves backward compatibility for deployments without a populated registry.")
 	trustedProxyCIDRs = flag.String("trusted-proxy-cidrs", "",
 		"Comma-separated CIDRs for proxy-header trust. Empty = any source (dev only). Ignored when --oidc-issuer-url is set.")
 )
@@ -96,10 +105,11 @@ var terminalPhases = map[string]bool{
 }
 
 type Server struct {
-	client       client.Client
-	dedupWindow  time.Duration
-	roles        *roleConfig
-	authRequired bool // true when --oidc-issuer-url is set or any subject list is non-empty
+	client                  client.Client
+	dedupWindow             time.Duration
+	roles                   *roleConfig
+	authRequired            bool // true when --oidc-issuer-url is set or any subject list is non-empty
+	requireGovernedResource bool // from --require-governed-resource
 }
 
 type affectedTargetBody struct {
@@ -210,9 +220,9 @@ func main() {
 		log.Fatalf("Failed to create client: %v", err)
 	}
 
-	rc := newRoleConfig(*agentSubjects, *reviewerSubjects, *agentGroups, *reviewerGroups)
-	authRequired := *oidcIssuerURL != "" || *agentSubjects != "" || *reviewerSubjects != "" ||
-		*agentGroups != "" || *reviewerGroups != ""
+	rc := newRoleConfig(*agentSubjects, *reviewerSubjects, *adminSubjects, *agentGroups, *reviewerGroups, *adminGroups)
+	authRequired := *oidcIssuerURL != "" || *agentSubjects != "" || *reviewerSubjects != "" || *adminSubjects != "" ||
+		*agentGroups != "" || *reviewerGroups != "" || *adminGroups != ""
 
 	// Refuse to start in a configuration where role allowlists are set but no trust boundary is
 	// defined: without --oidc-issuer-url, any client can forge X-Remote-User to claim any sub.
@@ -223,7 +233,13 @@ func main() {
 			"set --oidc-issuer-url for JWT validation or --trusted-proxy-cidrs to restrict proxy-header trust")
 	}
 
-	server := &Server{client: k8sClient, dedupWindow: *dedupWindow, roles: rc, authRequired: authRequired}
+	server := &Server{
+		client:                  k8sClient,
+		dedupWindow:             *dedupWindow,
+		roles:                   rc,
+		authRequired:            authRequired,
+		requireGovernedResource: *requireGovernedResource,
+	}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -254,6 +270,16 @@ func main() {
 	mux.HandleFunc("POST /agent-diagnostics/recompute-accuracy", server.handleRecomputeAccuracy)
 	mux.HandleFunc("GET /diagnostic-accuracy-summaries", server.handleListAccuracySummaries)
 	mux.Handle("GET /metrics", metricsHandler())
+	mux.HandleFunc("POST /governed-resources", server.handleCreateGovernedResource)
+	mux.HandleFunc("GET /governed-resources", server.handleListGovernedResources)
+	mux.HandleFunc("GET /governed-resources/{name}", server.handleGetGovernedResource)
+	mux.HandleFunc("PUT /governed-resources/{name}", server.handleReplaceGovernedResource)
+	mux.HandleFunc("DELETE /governed-resources/{name}", server.handleDeleteGovernedResource)
+	mux.HandleFunc("POST /safety-policies", server.handleCreateSafetyPolicy)
+	mux.HandleFunc("GET /safety-policies", server.handleListSafetyPolicies)
+	mux.HandleFunc("GET /safety-policies/{name}", server.handleGetSafetyPolicy)
+	mux.HandleFunc("PUT /safety-policies/{name}", server.handleReplaceSafetyPolicy)
+	mux.HandleFunc("DELETE /safety-policies/{name}", server.handleDeleteSafetyPolicy)
 
 	var authMiddleware func(http.Handler) http.Handler
 	if *oidcIssuerURL != "" {
@@ -319,6 +345,30 @@ func buildReasoningTrace(body *createAgentRequestBody) *v1alpha1.ReasoningTrace 
 // Note: the List→Create sequence is not atomic. Concurrent requests with the
 // same key can both pass this check and both be created. This is intentional:
 // dedup provides best-effort protection against reconciliation-loop floods, not
+// matchGovernedResource returns the most specific GovernedResource whose URIPattern
+// matches targetURI using path.Match semantics. Most specific = longest pattern;
+// ties broken alphabetically by name. Returns nil if no pattern matches.
+func matchGovernedResource(items []v1alpha1.GovernedResource, targetURI string) *v1alpha1.GovernedResource {
+	var best *v1alpha1.GovernedResource
+	for i := range items {
+		gr := &items[i]
+		matched, err := path.Match(gr.Spec.URIPattern, targetURI)
+		if err != nil {
+			log.Printf("invalid URIPattern %q in GovernedResource %s: %v", gr.Spec.URIPattern, gr.Name, err)
+			continue
+		}
+		if !matched {
+			continue
+		}
+		if best == nil ||
+			len(gr.Spec.URIPattern) > len(best.Spec.URIPattern) ||
+			(len(gr.Spec.URIPattern) == len(best.Spec.URIPattern) && gr.Name < best.Name) {
+			best = gr
+		}
+	}
+	return best
+}
+
 // a hard mutual-exclusion guarantee. A strict guarantee would require a
 // ValidatingAdmissionWebhook or a unique server-side constraint.
 func (s *Server) checkDuplicate(
@@ -454,6 +504,57 @@ func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request
 		},
 	}
 
+	// GovernedResource admission: URI → agent identity → action (per design doc order).
+	var matchedGR *v1alpha1.GovernedResource
+	var govResources v1alpha1.GovernedResourceList
+	var agentPermitted, actionPermitted bool
+	if err := s.client.List(r.Context(), &govResources); err != nil {
+		// If the CRD is not yet installed, treat as an empty list.
+		// This allows the system to boot gracefully even if the GovernedResource CRD
+		// is not yet available (e.g., during cluster initialization in e2e tests).
+		if strings.Contains(err.Error(), "no matches for kind") {
+			// Treat as empty list
+		} else {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list GovernedResources: %v", err))
+			return
+		}
+	}
+
+	// Backward compat: skip check when no GovernedResources exist and flag is false.
+	if len(govResources.Items) == 0 && !s.requireGovernedResource {
+		goto admissionPassed
+	}
+
+	matchedGR = matchGovernedResource(govResources.Items, body.TargetURI)
+	if matchedGR == nil {
+		writeError(w, http.StatusForbidden, v1alpha1.DenialCodeActionNotPermitted)
+		return
+	}
+
+	// Check agent identity (step 3 in design doc).
+	if len(matchedGR.Spec.PermittedAgents) > 0 {
+		agentPermitted = slices.Contains(matchedGR.Spec.PermittedAgents, body.AgentIdentity)
+		if !agentPermitted {
+			writeError(w, http.StatusForbidden, v1alpha1.DenialCodeIdentityInvalid)
+			return
+		}
+	}
+
+	// Check action (step 4 in design doc).
+	actionPermitted = slices.Contains(matchedGR.Spec.PermittedActions, body.Action)
+	if !actionPermitted {
+		writeError(w, http.StatusForbidden, v1alpha1.DenialCodeActionNotPermitted)
+		return
+	}
+
+admissionPassed:
+	if matchedGR != nil {
+		agentReq.Spec.GovernedResourceRef = &v1alpha1.GovernedResourceRef{
+			Name:       matchedGR.Name,
+			Generation: matchedGR.Generation,
+		}
+	}
+
 	if err := s.checkDuplicate(r, body.AgentIdentity, body.Action, body.TargetURI, ns, w); err != nil {
 		return
 	}
@@ -467,9 +568,15 @@ func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	name := agentReq.Name
+	s.pollAgentRequestPhase(w, r, agentReq.Name, ns, reqLabels)
+}
 
-	// Poll phase logic
+func (s *Server) pollAgentRequestPhase(
+	w http.ResponseWriter,
+	r *http.Request,
+	name, ns string,
+	reqLabels map[string]string,
+) {
 	timeout := time.After(90 * time.Second)
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -1342,4 +1449,396 @@ func (s *Server) handleHumanDecision(w http.ResponseWriter, r *http.Request, dec
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) handleCreateGovernedResource(w http.ResponseWriter, r *http.Request) {
+	sub := callerSubFromCtx(r.Context())
+	groups := callerGroupsFromCtx(r.Context())
+	if !requireRole(s.roles, "admin", sub, groups, w) {
+		return
+	}
+
+	var gr v1alpha1.GovernedResource
+	if err := json.NewDecoder(r.Body).Decode(&gr); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if gr.Spec.ContextSchema != nil {
+		if err := validateContextSchema(gr.Spec.ContextSchema.Raw); err != nil {
+			writeError(w, 422, fmt.Sprintf("invalid contextSchema: %v", err))
+			return
+		}
+	}
+
+	if err := s.checkContextSchemaConsistency(r.Context(), &gr); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+
+	if err := s.client.Create(r.Context(), &gr); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, gr)
+}
+
+func (s *Server) handleListGovernedResources(w http.ResponseWriter, r *http.Request) {
+	sub := callerSubFromCtx(r.Context())
+	groups := callerGroupsFromCtx(r.Context())
+	if !requireRole(s.roles, "admin", sub, groups, w) {
+		return
+	}
+
+	var list v1alpha1.GovernedResourceList
+	if err := s.client.List(r.Context(), &list); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) handleGetGovernedResource(w http.ResponseWriter, r *http.Request) {
+	sub := callerSubFromCtx(r.Context())
+	groups := callerGroupsFromCtx(r.Context())
+	if !requireRole(s.roles, "admin", sub, groups, w) {
+		return
+	}
+
+	name := r.PathValue("name")
+	var gr v1alpha1.GovernedResource
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &gr); err != nil {
+		if apierrors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, gr)
+}
+
+func (s *Server) handleReplaceGovernedResource(w http.ResponseWriter, r *http.Request) {
+	sub := callerSubFromCtx(r.Context())
+	groups := callerGroupsFromCtx(r.Context())
+	if !requireRole(s.roles, "admin", sub, groups, w) {
+		return
+	}
+
+	name := r.PathValue("name")
+	var newGR v1alpha1.GovernedResource
+	if err := json.NewDecoder(r.Body).Decode(&newGR); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	newGR.Name = name
+
+	if newGR.Spec.ContextSchema != nil {
+		if err := validateContextSchema(newGR.Spec.ContextSchema.Raw); err != nil {
+			writeError(w, 422, fmt.Sprintf("invalid contextSchema: %v", err))
+			return
+		}
+	}
+
+	if err := s.checkContextSchemaConsistency(r.Context(), &newGR); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var existing v1alpha1.GovernedResource
+		if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &existing); err != nil {
+			return err
+		}
+
+		if err := checkContextSchemaAppendOnly(existing.Spec.ContextSchema, newGR.Spec.ContextSchema); err != nil {
+			return fmt.Errorf("INVALID_EVOLUTION: %w", err)
+		}
+
+		existing.Spec = newGR.Spec
+		existing.Labels = newGR.Labels
+		existing.Annotations = newGR.Annotations
+		return s.client.Update(r.Context(), &existing)
+	})
+
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if strings.Contains(err.Error(), "INVALID_EVOLUTION") {
+			writeError(w, http.StatusConflict, strings.TrimPrefix(err.Error(), "INVALID_EVOLUTION: "))
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var updated v1alpha1.GovernedResource
+	_ = s.client.Get(r.Context(), types.NamespacedName{Name: name}, &updated)
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (s *Server) handleDeleteGovernedResource(w http.ResponseWriter, r *http.Request) {
+	sub := callerSubFromCtx(r.Context())
+	groups := callerGroupsFromCtx(r.Context())
+	if !requireRole(s.roles, "admin", sub, groups, w) {
+		return
+	}
+
+	name := r.PathValue("name")
+	gr := &v1alpha1.GovernedResource{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+	}
+	if err := s.client.Delete(r.Context(), gr); err != nil {
+		if apierrors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if apierrors.IsConflict(err) {
+			writeError(w, http.StatusConflict, "active requests are blocking deletion (finalizer present)")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Kubernetes sets deletionTimestamp and returns 202 when finalizers are present;
+	// the actual removal happens after the controller clears them. Check whether
+	// the object is still terminating so callers get the correct status code.
+	var check v1alpha1.GovernedResource
+	if getErr := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &check); getErr != nil {
+		if apierrors.IsNotFound(getErr) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, getErr.Error())
+		return
+	}
+	// Object still exists — finalizers are blocking final removal.
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (s *Server) handleCreateSafetyPolicy(w http.ResponseWriter, r *http.Request) {
+	sub := callerSubFromCtx(r.Context())
+	groups := callerGroupsFromCtx(r.Context())
+	if !requireRole(s.roles, "admin", sub, groups, w) {
+		return
+	}
+
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = defaultNamespace
+	}
+
+	var sp v1alpha1.SafetyPolicy
+	if err := json.NewDecoder(r.Body).Decode(&sp); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	sp.Namespace = ns
+
+	var grList v1alpha1.GovernedResourceList
+	if err := s.client.List(r.Context(), &grList); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if err := validateSafetypolicyCEL(r.Context(), s.client, &sp, grList.Items); err != nil {
+		writeError(w, 422, err.Error())
+		return
+	}
+
+	if err := s.client.Create(r.Context(), &sp); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, sp)
+}
+
+func (s *Server) handleListSafetyPolicies(w http.ResponseWriter, r *http.Request) {
+	sub := callerSubFromCtx(r.Context())
+	groups := callerGroupsFromCtx(r.Context())
+	if !requireRole(s.roles, "admin", sub, groups, w) {
+		return
+	}
+
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = defaultNamespace
+	}
+
+	var list v1alpha1.SafetyPolicyList
+	if err := s.client.List(r.Context(), &list, client.InNamespace(ns)); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) handleGetSafetyPolicy(w http.ResponseWriter, r *http.Request) {
+	sub := callerSubFromCtx(r.Context())
+	groups := callerGroupsFromCtx(r.Context())
+	if !requireRole(s.roles, "admin", sub, groups, w) {
+		return
+	}
+
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = defaultNamespace
+	}
+	name := r.PathValue("name")
+
+	var sp v1alpha1.SafetyPolicy
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &sp); err != nil {
+		if apierrors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, sp)
+}
+
+func (s *Server) handleReplaceSafetyPolicy(w http.ResponseWriter, r *http.Request) {
+	sub := callerSubFromCtx(r.Context())
+	groups := callerGroupsFromCtx(r.Context())
+	if !requireRole(s.roles, "admin", sub, groups, w) {
+		return
+	}
+
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = defaultNamespace
+	}
+	name := r.PathValue("name")
+
+	var newSP v1alpha1.SafetyPolicy
+	if err := json.NewDecoder(r.Body).Decode(&newSP); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	var grList v1alpha1.GovernedResourceList
+	if err := s.client.List(r.Context(), &grList); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if err := validateSafetypolicyCEL(r.Context(), s.client, &newSP, grList.Items); err != nil {
+		writeError(w, 422, err.Error())
+		return
+	}
+
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var existing v1alpha1.SafetyPolicy
+		if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &existing); err != nil {
+			return err
+		}
+		existing.Spec = newSP.Spec
+		existing.Labels = newSP.Labels
+		existing.Annotations = newSP.Annotations
+		return s.client.Update(r.Context(), &existing)
+	})
+
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var updated v1alpha1.SafetyPolicy
+	_ = s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &updated)
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (s *Server) handleDeleteSafetyPolicy(w http.ResponseWriter, r *http.Request) {
+	sub := callerSubFromCtx(r.Context())
+	groups := callerGroupsFromCtx(r.Context())
+	if !requireRole(s.roles, "admin", sub, groups, w) {
+		return
+	}
+
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = defaultNamespace
+	}
+	name := r.PathValue("name")
+
+	sp := &v1alpha1.SafetyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+	}
+	if err := s.client.Delete(r.Context(), sp); err != nil {
+		if apierrors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) checkContextSchemaConsistency(ctx context.Context, newGR *v1alpha1.GovernedResource) error {
+	if newGR.Spec.ContextFetcher == "none" || newGR.Spec.ContextSchema == nil {
+		return nil
+	}
+
+	var list v1alpha1.GovernedResourceList
+	if err := s.client.List(ctx, &list); err != nil {
+		return err
+	}
+
+	for _, gr := range list.Items {
+		if gr.Name == newGR.Name {
+			continue // Skip self on update
+		}
+		if gr.Spec.ContextFetcher == newGR.Spec.ContextFetcher && gr.Spec.ContextSchema != nil {
+			// New schema must be append-only compatible with each peer's schema so
+			// that existing CEL expressions continue to compile after rollout.
+			if err := checkContextSchemaAppendOnly(gr.Spec.ContextSchema, newGR.Spec.ContextSchema); err != nil {
+				return fmt.Errorf("contextSchema evolution incompatible with GovernedResource %q: %w", gr.Name, err)
+			}
+			// Don't return early — validate all peers.
+		}
+	}
+	return nil
+}
+
+func checkContextSchemaAppendOnly(oldSchema, newSchema *apiextensionsv1.JSON) error {
+	if oldSchema == nil {
+		return nil
+	}
+	if newSchema == nil {
+		var oldM map[string]any
+		_ = json.Unmarshal(oldSchema.Raw, &oldM)
+		if props, ok := oldM["properties"].(map[string]any); ok && len(props) > 0 {
+			return fmt.Errorf("contextSchema is append-only: field %q was removed", "any")
+		}
+		return nil
+	}
+
+	var oldM, newM map[string]any
+	_ = json.Unmarshal(oldSchema.Raw, &oldM)
+	_ = json.Unmarshal(newSchema.Raw, &newM)
+
+	oldProps, _ := oldM["properties"].(map[string]any)
+	newProps, _ := newM["properties"].(map[string]any)
+
+	for k, v := range oldProps {
+		oldField, _ := v.(map[string]any)
+		newFieldRaw, exists := newProps[k]
+		if !exists {
+			return fmt.Errorf("contextSchema is append-only: field %q was removed", k)
+		}
+		newField, _ := newFieldRaw.(map[string]any)
+
+		if oldField["type"] != newField["type"] {
+			return fmt.Errorf("contextSchema is append-only: field %q was removed or changed type", k)
+		}
+	}
+	return nil
 }

@@ -538,7 +538,7 @@ type GovernedResourceStatus struct {
 | 3 | Admission check in gateway | URI glob match (`path.Match`) → agent identity → action; most-specific-match with alphabetical tiebreak |
 | 4 | Add `ProviderContext` to `AgentRequestStatus` | `*apiextensionsv1.JSON`, additive; `ControlPlaneVerification` retained |
 
-### Milestone 2 — Policy binding integrity
+### Milestone 2 — Policy binding integrity ✅ Done
 
 | Step | What | Notes |
 |---|---|---|
@@ -547,7 +547,7 @@ type GovernedResourceStatus struct {
 | 7 | `GOVERNED_RESOURCE_DELETED` detection in controller | If `spec.governedResourceRef.name` points to a missing object → deny with `GOVERNED_RESOURCE_DELETED` |
 | 8 | Finalizer on `GovernedResource` | Controller adds/removes `governance.aip.io/active-requests`; blocks deletion during live requests |
 
-### Milestone 3 — Admin gateway API
+### Milestone 3 — Admin gateway API ✅ Done
 
 | Step | What | Notes |
 |---|---|---|
@@ -556,7 +556,7 @@ type GovernedResourceStatus struct {
 | 11 | Denial code for `GOVERNED_RESOURCE_DELETED` | Additive constant in `agentrequest_types.go` |
 | 12 | Replace `TargetSelector` with `governedResourceSelector` + `contextType` in SafetyPolicy | API change; update CRD schema and gateway handler |
 
-### Milestone 4 — Context fetchers + schema validation
+### Milestone 4 — Context fetchers + schema validation ✅ Done
 
 | Step | What | Notes |
 |---|---|---|
@@ -571,4 +571,4 @@ type GovernedResourceStatus struct {
 | 21 | Runtime schema validation + `FetcherSchemaViolation` condition | Validate fetched JSON against contextSchema; fail-open; record specific field/type mismatch |
 | 22 | Helm chart + docs update | |
 
-Milestones 2 and 3 are the next focus. Milestone 4 is deferred until there is a live demo environment.
+All milestones are complete.
