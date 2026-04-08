@@ -879,7 +879,7 @@ func (s *Server) handleCreateAgentDiagnostic(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create AgentDiagnostic: %v", err))
 		return
 	}
-	diagnosticCreatedTotal.WithLabelValues(body.DiagnosticType).Inc()
+	diagnosticCreatedTotal.WithLabelValues(body.AgentIdentity).Inc()
 
 	// Return normalized label values so callers can use them in label-selector
 	// queries without having to guess what normalization was applied.
@@ -993,6 +993,7 @@ func (s *Server) handlePatchAgentDiagnosticStatus(w http.ResponseWriter, r *http
 		return
 	}
 
+	diagnosticVerdictTotal.WithLabelValues(body.Verdict).Inc()
 	agentId := diag.Spec.AgentIdentity
 	summaryName := summaryNameForAgent(agentId)
 	summaryUpdatedAt := metav1.Now()
@@ -1073,7 +1074,6 @@ func (s *Server) handlePatchAgentDiagnosticStatus(w http.ResponseWriter, r *http
 		return
 	}
 
-	diagnosticVerdictTotal.WithLabelValues(body.Verdict).Inc()
 	writeJSON(w, http.StatusOK, map[string]any{"message": "verdict saved"})
 }
 

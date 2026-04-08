@@ -29,9 +29,9 @@ var (
 	diagnosticCreatedTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "aip_diagnostic_created_total",
-			Help: "Total number of AgentDiagnostic records created, by diagnostic type.",
+			Help: "Total number of AgentDiagnostic records created.",
 		},
-		[]string{"diagnostic_type"},
+		[]string{"agent_identity"},
 	)
 	diagnosticDedupTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "aip_diagnostic_dedup_total",
