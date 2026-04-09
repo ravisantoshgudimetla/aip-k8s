@@ -449,6 +449,9 @@ func (s *Server) checkDiagnosticDuplicate(
 // Used by the dashboard to enable role-aware rendering without a page reload.
 func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 	sub := callerSubFromCtx(r.Context())
+	if sub == "" {
+		sub = "unknown"
+	}
 	groups := callerGroupsFromCtx(r.Context())
 
 	role := "unknown"
