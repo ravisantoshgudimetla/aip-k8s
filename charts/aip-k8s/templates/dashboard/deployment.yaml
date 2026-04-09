@@ -60,3 +60,64 @@ spec:
             requests:
               cpu: 10m
               memory: 64Mi
+{{- if .Values.dashboard.authProxy.enabled }}
+        - name: auth-proxy
+          image: "{{ .Values.dashboard.authProxy.image.repository }}:{{ .Values.dashboard.authProxy.image.tag }}"
+          args:
+            - --provider={{ .Values.dashboard.authProxy.provider }}
+            - --oidc-issuer-url={{ .Values.dashboard.authProxy.oidcIssuerURL }}
+            - --upstream=http://localhost:8082
+            - --http-address=0.0.0.0:{{ .Values.dashboard.authProxy.port }}
+            - --redirect-url={{ .Values.dashboard.authProxy.redirectURL }}
+            - --scope={{ .Values.dashboard.authProxy.scope }}
+            - --email-domain={{ .Values.dashboard.authProxy.emailDomain }}
+            - --pass-authorization-header={{ .Values.dashboard.authProxy.passAuthorizationHeader }}
+            - --cookie-secure=true
+            - --cookie-httponly=true
+            - --cookie-samesite=lax
+          env:
+            - name: OAUTH2_PROXY_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "dashboard.authProxy.existingSecret is required when authProxy is enabled (must contain keys: client-id, client-secret, cookie-secret)" .Values.dashboard.authProxy.existingSecret | quote }}
+                  key: client-id
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "dashboard.authProxy.existingSecret is required when authProxy is enabled (must contain keys: client-id, client-secret, cookie-secret)" .Values.dashboard.authProxy.existingSecret | quote }}
+                  key: client-secret
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "dashboard.authProxy.existingSecret is required when authProxy is enabled (must contain keys: client-id, client-secret, cookie-secret)" .Values.dashboard.authProxy.existingSecret | quote }}
+                  key: cookie-secret
+          ports:
+            - name: proxy
+              containerPort: {{ .Values.dashboard.authProxy.port }}
+              protocol: TCP
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - "ALL"
+          resources:
+            limits:
+              cpu: 100m
+              memory: 64Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+{{- if .Values.dashboard.authProxy.extraVolumeMounts }}
+          volumeMounts:
+            {{- toYaml .Values.dashboard.authProxy.extraVolumeMounts | nindent 12 }}
+{{- end }}
+{{- end }}
+{{- if .Values.dashboard.extraVolumes }}
+      volumes:
+        {{- toYaml .Values.dashboard.extraVolumes | nindent 8 }}
+{{- end }}

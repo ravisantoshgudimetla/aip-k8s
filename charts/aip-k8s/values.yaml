@@ -48,3 +48,18 @@ dashboard:
   service:
     type: ClusterIP
     port: 8082
+  authProxy:
+    enabled: false
+    image:
+      repository: quay.io/oauth2-proxy/oauth2-proxy
+      tag: latest
+    provider: "oidc"
+    oidcIssuerURL: ""
+    scope: "openid groups email"
+    emailDomain: "*"
+    existingSecret: ""   # K8s Secret with keys: client-id, client-secret, cookie-secret
+    redirectURL: ""
+    passAuthorizationHeader: true
+    port: 4180
+    extraVolumeMounts: []
+  extraVolumes: []

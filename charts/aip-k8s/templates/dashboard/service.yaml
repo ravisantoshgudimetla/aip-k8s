@@ -9,7 +9,7 @@ spec:
   type: {{ .Values.dashboard.service.type }}
   ports:
     - port: {{ .Values.dashboard.service.port }}
-      targetPort: http
+      targetPort: {{ if .Values.dashboard.authProxy.enabled }}proxy{{ else }}http{{ end }}
       protocol: TCP
       name: http
   selector:
