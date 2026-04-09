@@ -107,18 +107,24 @@ const state = {
 };
 
 async function loadIdentity() {
-    if (!getToken()) {
-        updateRoleUI('');
-        return;
-    }
     try {
         const resp = await apiFetch('/api/whoami');
-        if (!resp.ok) { updateRoleUI(''); return; }
+        if (!resp.ok) {
+            if (!getToken()) updateRoleUI('');
+            return;
+        }
         const data = await resp.json();
         state.identity = data.identity || '';
         updateRoleUI(data.role || '');
+        // If whoami succeeded without a manually stored token, the auth proxy
+        // is injecting credentials — hide the token UI entirely.
+        if (!getToken() && data.identity && data.identity !== 'unknown') {
+            const btn = document.getElementById('token-btn');
+            if (btn) btn.style.display = 'none';
+            hideBanner();
+        }
     } catch (_) {
-        updateRoleUI('');
+        if (!getToken()) updateRoleUI('');
     }
 }
 
