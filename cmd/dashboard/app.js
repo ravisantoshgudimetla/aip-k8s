@@ -104,6 +104,7 @@ const state = {
     diagnosticsGen: 0,
     role: '',          // 'agent' | 'reviewer' | 'admin' | ''
     identity: '',
+    proxyAuth: false,  // true when auth proxy is injecting credentials
 };
 
 async function loadIdentity() {
@@ -117,8 +118,9 @@ async function loadIdentity() {
         state.identity = data.identity || '';
         updateRoleUI(data.role || '');
         // If whoami succeeded without a manually stored token, the auth proxy
-        // is injecting credentials — hide the token UI entirely.
+        // is injecting credentials — set proxyAuth and hide the token UI.
         if (!getToken() && data.identity && data.identity !== 'unknown') {
+            state.proxyAuth = true;
             const btn = document.getElementById('token-btn');
             if (btn) btn.style.display = 'none';
             hideBanner();
@@ -152,7 +154,7 @@ function updateRoleUI(role) {
 // ── Agent Requests tab ───────────────────────────────────────────────────────
 
 async function fetchRequests() {
-    if (!getToken()) {
+    if (!getToken() && !state.proxyAuth) {
         showBanner('Not authenticated — paste a Bearer token to continue.', 'warn');
         return;
     }
@@ -1120,11 +1122,9 @@ window.deleteSP = async function(name, ns) {
 // ── Bootstrap ────────────────────────────────────────────────────────────────
 
 async function init() {
-    const token = getToken();
-    if (!token) {
+    await loadIdentity();
+    if (!getToken() && !state.proxyAuth) {
         showBanner('Not authenticated — paste a Bearer token to continue.', 'warn');
-    } else {
-        await loadIdentity();
     }
     fetchRequests();
 }
