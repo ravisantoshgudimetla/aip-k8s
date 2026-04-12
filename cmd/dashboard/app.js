@@ -36,8 +36,12 @@ async function apiFetch(url, opts = {}) {
             } else {
                 showBanner('Session expired. Authentication redirect failed.', 'error');
             }
-            // Return a synthetic failure response instead of the HTML redirect
-            return { ok: false, status: 401, statusText: 'Authentication redirect' };
+            // Return a synthetic Response so callers can safely call .json()/.text()
+            return new Response(JSON.stringify({ error: 'Authentication redirect' }), {
+                status: 401,
+                statusText: 'Authentication redirect',
+                headers: { 'Content-Type': 'application/json' },
+            });
         }
         showBanner('Session expired — please re-enter your token.', 'error');
     } else if (state.proxyAuth) {
