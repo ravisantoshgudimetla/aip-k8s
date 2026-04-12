@@ -132,6 +132,7 @@ func (r *AgentRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// 3. Initialize Phase if empty
 	if agentReq.Status.Phase == "" && !meta.IsStatusConditionTrue(agentReq.Status.Conditions, "RequestSubmitted") {
 		log.FromContext(ctx).Info("Initializing AgentRequest phase to Pending", "name", agentReq.Name)
+		base := agentReq.DeepCopy()
 		agentReq.Status.Phase = governancev1alpha1.PhasePending
 		agentRequestActive.Inc()
 		agentRequestTotal.WithLabelValues(governancev1alpha1.PhasePending).Inc()
@@ -145,7 +146,7 @@ func (r *AgentRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			Message: "Initial phase set to Pending",
 		})
 
-		if err := r.Status().Patch(ctx, &agentReq, client.MergeFrom(agentReq.DeepCopy())); err != nil {
+		if err := r.Status().Patch(ctx, &agentReq, client.MergeFrom(base)); err != nil {
 			return ctrl.Result{}, err
 		}
 		// Emit initial AuditRecord. We return here so subsequent Reconcile will
@@ -175,6 +176,7 @@ func (r *AgentRequestReconciler) checkGovernedResourceIntegrity(ctx context.Cont
 		if errors.IsNotFound(err) {
 			log.FromContext(ctx).Info("Denying AgentRequest because its GovernedResource was deleted", "name", agentReq.Name, "governedResource", agentReq.Spec.GovernedResourceRef.Name)
 			fromPhase := agentReq.Status.Phase
+			base := agentReq.DeepCopy()
 			agentReq.Status.Phase = governancev1alpha1.PhaseDenied
 			agentReq.Status.Denial = &governancev1alpha1.DenialResponse{
 				Code:    governancev1alpha1.DenialCodeGovernedResourceDeleted,
@@ -183,7 +185,7 @@ func (r *AgentRequestReconciler) checkGovernedResourceIntegrity(ctx context.Cont
 			agentRequestDeniedTotal.WithLabelValues(governancev1alpha1.DenialCodeGovernedResourceDeleted).Inc()
 			agentRequestActive.Dec()
 			agentRequestTotal.WithLabelValues(governancev1alpha1.PhaseDenied).Inc()
-			if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(agentReq.DeepCopy())); err != nil {
+			if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
 				return err
 			}
 			if err := r.releaseLock(ctx, agentReq); err != nil {
@@ -204,6 +206,7 @@ func (r *AgentRequestReconciler) checkGovernedResourceIntegrity(ctx context.Cont
 			"expectedGeneration", agentReq.Spec.GovernedResourceRef.Generation,
 			"currentGeneration", gr.Generation)
 		fromPhase := agentReq.Status.Phase
+		base := agentReq.DeepCopy()
 		agentReq.Status.Phase = governancev1alpha1.PhaseDenied
 		agentReq.Status.Denial = &governancev1alpha1.DenialResponse{
 			Code: governancev1alpha1.DenialCodeGenerationMismatch,
@@ -217,7 +220,7 @@ func (r *AgentRequestReconciler) checkGovernedResourceIntegrity(ctx context.Cont
 		agentRequestDeniedTotal.WithLabelValues(governancev1alpha1.DenialCodeGenerationMismatch).Inc()
 		agentRequestActive.Dec()
 		agentRequestTotal.WithLabelValues(governancev1alpha1.PhaseDenied).Inc()
-		if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(agentReq.DeepCopy())); err != nil {
+		if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
 			return err
 		}
 		if err := r.releaseLock(ctx, agentReq); err != nil {
@@ -236,10 +239,11 @@ func (r *AgentRequestReconciler) checkAgentTransitions(ctx context.Context, agen
 	// Agent completed successfully
 	if meta.IsStatusConditionTrue(agentReq.Status.Conditions, governancev1alpha1.ConditionCompleted) && agentReq.Status.Phase != governancev1alpha1.PhaseCompleted {
 		fromPhase := agentReq.Status.Phase
+		base := agentReq.DeepCopy()
 		agentReq.Status.Phase = governancev1alpha1.PhaseCompleted
 		agentRequestActive.Dec()
 		agentRequestTotal.WithLabelValues(governancev1alpha1.PhaseCompleted).Inc()
-		if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(agentReq.DeepCopy())); err != nil {
+		if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
 			return false, err
 		}
 		if err := r.releaseLock(ctx, agentReq); err != nil {
@@ -257,10 +261,11 @@ func (r *AgentRequestReconciler) checkAgentTransitions(ctx context.Context, agen
 	// Agent failed
 	if meta.IsStatusConditionTrue(agentReq.Status.Conditions, governancev1alpha1.ConditionFailed) && agentReq.Status.Phase != governancev1alpha1.PhaseFailed {
 		fromPhase := agentReq.Status.Phase
+		base := agentReq.DeepCopy()
 		agentReq.Status.Phase = governancev1alpha1.PhaseFailed
 		agentRequestActive.Dec()
 		agentRequestTotal.WithLabelValues(governancev1alpha1.PhaseFailed).Inc()
-		if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(agentReq.DeepCopy())); err != nil {
+		if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
 			return false, err
 		}
 		if err := r.releaseLock(ctx, agentReq); err != nil {
@@ -278,9 +283,10 @@ func (r *AgentRequestReconciler) checkAgentTransitions(ctx context.Context, agen
 	// Agent signals it started executing
 	if meta.IsStatusConditionTrue(agentReq.Status.Conditions, governancev1alpha1.ConditionExecuting) && agentReq.Status.Phase == governancev1alpha1.PhaseApproved {
 		fromPhase := agentReq.Status.Phase
+		base := agentReq.DeepCopy()
 		agentReq.Status.Phase = governancev1alpha1.PhaseExecuting
 		agentRequestTotal.WithLabelValues(governancev1alpha1.PhaseExecuting).Inc()
-		if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(agentReq.DeepCopy())); err != nil {
+		if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
 			return false, err
 		}
 		if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventLockAcquired, "", ""); err != nil {
@@ -426,13 +432,6 @@ func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, agentReq 
 		})
 	}
 
-	meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{
-		Type:    governancev1alpha1.ConditionPolicyEvaluated,
-		Status:  metav1.ConditionTrue,
-		Reason:  "EvaluationComplete",
-		Message: result.Message,
-	})
-
 	policyEvalAudit := &governancev1alpha1.AuditRecord{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: agentReq.Name + "-audit-",
@@ -470,6 +469,7 @@ func (r *AgentRequestReconciler) handleApprovalWait(ctx context.Context, agentRe
 			return r.handleLockAcquisition(ctx, agentReq, fromPhase)
 		case "denied":
 			logger.Info("Human denied AgentRequest via spec", "name", agentReq.Name)
+			base := agentReq.DeepCopy()
 			agentReq.Status.Phase = governancev1alpha1.PhaseDenied
 			agentReq.Status.Denial = &governancev1alpha1.DenialResponse{
 				Code:    governancev1alpha1.DenialCodePolicyViolation,
@@ -484,7 +484,7 @@ func (r *AgentRequestReconciler) handleApprovalWait(ctx context.Context, agentRe
 				Reason:  "ManualDenial",
 				Message: "Denied by human reviewer",
 			})
-			if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(agentReq.DeepCopy())); err != nil {
+			if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
 				return ctrl.Result{}, err
 			}
 			if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventRequestDenied, fromPhase, governancev1alpha1.PhaseDenied); err != nil {
@@ -500,6 +500,17 @@ func (r *AgentRequestReconciler) handleApprovalWait(ctx context.Context, agentRe
 func (r *AgentRequestReconciler) handleEvaluationResult(ctx context.Context, agentReq *governancev1alpha1.AgentRequest, result *evaluation.Result, policyEvalAudit *governancev1alpha1.AuditRecord) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	fromPhase := agentReq.Status.Phase
+
+	// Capture base before any mutations so the patch diff includes
+	// ConditionPolicyEvaluated and all action-specific conditions atomically.
+	base := agentReq.DeepCopy()
+
+	meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{
+		Type:    governancev1alpha1.ConditionPolicyEvaluated,
+		Status:  metav1.ConditionTrue,
+		Reason:  "EvaluationComplete",
+		Message: result.Message,
+	})
 
 	switch result.Action {
 	case governancev1alpha1.ResultDeny:
@@ -530,7 +541,7 @@ func (r *AgentRequestReconciler) handleEvaluationResult(ctx context.Context, age
 	}
 
 	// Single status patch: commits ConditionPolicyEvaluated + action-specific conditions atomically
-	if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(agentReq.DeepCopy())); err != nil {
+	if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
 		logger.Error(err, "Failed to update Status with evaluation results")
 		return ctrl.Result{}, err
 	}
@@ -610,6 +621,7 @@ func (r *AgentRequestReconciler) handleLockAcquisition(ctx context.Context, agen
 					// Timeout exceeded
 					logger.Info("Lock wait timeout exceeded", "lease", leaseName)
 					opsLockContentionTotal.Inc()
+					base := agentReq.DeepCopy()
 					agentReq.Status.Phase = governancev1alpha1.PhaseDenied
 					agentReq.Status.Denial = &governancev1alpha1.DenialResponse{
 						Code:    governancev1alpha1.DenialCodeLockTimeout,
@@ -626,7 +638,7 @@ func (r *AgentRequestReconciler) handleLockAcquisition(ctx context.Context, agen
 						Message: "Lock acquisition timed out",
 					})
 
-					if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(agentReq.DeepCopy())); err != nil {
+					if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
 						return ctrl.Result{}, err
 					}
 
@@ -651,6 +663,7 @@ func (r *AgentRequestReconciler) handleLockAcquisition(ctx context.Context, agen
 	// Lock acquired successfully!
 	opsLockActive.Inc()
 	agentRequestTotal.WithLabelValues(governancev1alpha1.PhaseApproved).Inc()
+	base := agentReq.DeepCopy()
 	meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{
 		Type:    governancev1alpha1.ConditionApproved,
 		Status:  metav1.ConditionTrue,
@@ -659,7 +672,7 @@ func (r *AgentRequestReconciler) handleLockAcquisition(ctx context.Context, agen
 	})
 
 	agentReq.Status.Phase = governancev1alpha1.PhaseApproved
-	if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(agentReq.DeepCopy())); err != nil {
+	if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -702,15 +715,16 @@ func (r *AgentRequestReconciler) reconcileExecuting(ctx context.Context, agentRe
 			opsLockExpiredTotal.Inc()
 			agentRequestActive.Dec()
 			agentRequestTotal.WithLabelValues(governancev1alpha1.PhaseFailed).Inc()
+			fromPhase := agentReq.Status.Phase
+			base := agentReq.DeepCopy()
 			meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{
 				Type:    governancev1alpha1.ConditionFailed,
 				Status:  metav1.ConditionTrue,
 				Reason:  governancev1alpha1.DenialCodeLockTimeout,
 				Message: "Heartbeat timeout: Agent failed to renew OpsLock lease before expiration",
 			})
-			fromPhase := agentReq.Status.Phase
 			agentReq.Status.Phase = governancev1alpha1.PhaseFailed
-			if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(agentReq.DeepCopy())); err != nil {
+			if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
 				return ctrl.Result{}, err
 			}
 
