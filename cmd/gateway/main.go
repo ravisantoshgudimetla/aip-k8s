@@ -237,10 +237,15 @@ func main() {
 			"set --oidc-issuer-url for JWT validation or --trusted-proxy-cidrs to restrict proxy-header trust")
 	}
 
+	wt := *waitTimeout
+	if wt <= 0 {
+		wt = 90 * time.Second
+		log.Printf("--wait-timeout must be positive; using default %v", wt)
+	}
 	server := &Server{
 		client:                  k8sClient,
 		dedupWindow:             *dedupWindow,
-		waitTimeout:             *waitTimeout,
+		waitTimeout:             wt,
 		roles:                   rc,
 		authRequired:            authRequired,
 		requireGovernedResource: *requireGovernedResource,
