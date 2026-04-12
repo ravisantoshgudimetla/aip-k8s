@@ -27,8 +27,25 @@ async function apiFetch(url, opts = {}) {
     const headers = { ...(opts.headers || {}) };
     if (token) headers['Authorization'] = 'Bearer ' + token;
     const resp = await fetch(url, { ...opts, headers });
-    if (resp.status === 401) {
+    if (resp.status === 401 || (state.proxyAuth && resp.redirected)) {
+        if (state.proxyAuth) {
+            const count = parseInt(sessionStorage.getItem('reload-count') || '0', 10);
+            if (count < 3) {
+                sessionStorage.setItem('reload-count', (count + 1).toString());
+                window.location.reload();
+            } else {
+                showBanner('Session expired. Authentication redirect failed.', 'error');
+            }
+            // Return a synthetic Response so callers can safely call .json()/.text()
+            return new Response(JSON.stringify({ error: 'Authentication redirect' }), {
+                status: 401,
+                statusText: 'Authentication redirect',
+                headers: { 'Content-Type': 'application/json' },
+            });
+        }
         showBanner('Session expired — please re-enter your token.', 'error');
+    } else if (state.proxyAuth) {
+        sessionStorage.removeItem('reload-count');
     }
     return resp;
 }
@@ -799,7 +816,7 @@ function renderDiagnostics() {
                 <td><span class="chip">${escapeHtml(diag.spec.agentIdentity)}</span></td>
                 <td><span class="badge ${getDiagnosticTypeClass(diag.spec.diagnosticType)}">${escapeHtml(diag.spec.diagnosticType)}</span></td>
                 <td><span class="chip">${escapeHtml(diag.spec.correlationID)}</span></td>
-                <td style="max-width:300px;">${escapeHtml(diag.spec.summary)}</td>
+                <td>${escapeHtml(diag.spec.summary)}</td>
                 <td>${hasDetails
                     ? `<button class="details-btn" data-target="${escapeHtml(detailsId)}" onclick="toggleDetails(this.dataset.target)">View</button>
                        <div id="${escapeHtml(detailsId)}" class="details-json" style="display:none"></div>`

@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -57,11 +58,18 @@ var _ = Describe("Phase 6: Gateway API", Ordered, func() {
 		binPath := projDir + "/bin/gateway"
 		cmdPath := projDir + "/cmd/gateway"
 
+		var cmd *exec.Cmd
+		var out []byte
+
 		By("ensuring governance CRDs are installed")
-		cmd := exec.Command("make", "install")
-		cmd.Dir = projDir
-		out, err := cmd.CombinedOutput()
-		Expect(err).NotTo(HaveOccurred(), "failed to install CRDs: %s", string(out))
+		if os.Getenv("HELM_DEPLOYED") != "true" {
+			cmd = exec.Command("make", "install")
+			cmd.Dir = projDir
+			out, err = cmd.CombinedOutput()
+			Expect(err).NotTo(HaveOccurred(), "failed to install CRDs: %s", string(out))
+		} else {
+			By("skipping make install; HELM_DEPLOYED=true")
+		}
 
 		// Deploy the controller only when it is not already running.
 		// In the full suite (make test-e2e) the Manager BeforeAll deploys it first;
@@ -69,14 +77,20 @@ var _ = Describe("Phase 6: Gateway API", Ordered, func() {
 		// and conflict with Manager's own kubectl create ns. In the chart-e2e
 		// workflow the images are loaded under ghcr.io tags, not managerImage, so
 		// make deploy would pull a non-existent image and fail.
+		// When HELM_DEPLOYED=true the chart already deployed the controller under a
+		// different deployment name (aip-k8s-controller); skip make deploy entirely.
 		By("ensuring controller-manager is deployed (skips if already running)")
-		checkCmd := exec.Command("kubectl", "get", "deployment",
-			"aip-k8s-controller-manager", "-n", "aip-k8s-system")
-		if _, checkErr := utils.Run(checkCmd); checkErr != nil {
-			cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
-			cmd.Dir = projDir
-			out, err = cmd.CombinedOutput()
-			Expect(err).NotTo(HaveOccurred(), "failed to deploy controller-manager: %s", string(out))
+		if os.Getenv("HELM_DEPLOYED") != "true" {
+			checkCmd := exec.Command("kubectl", "get", "deployment",
+				"aip-k8s-controller-manager", "-n", "aip-k8s-system")
+			if _, checkErr := utils.Run(checkCmd); checkErr != nil {
+				cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
+				cmd.Dir = projDir
+				out, err = cmd.CombinedOutput()
+				Expect(err).NotTo(HaveOccurred(), "failed to deploy controller-manager: %s", string(out))
+			}
+		} else {
+			By("skipping make deploy; HELM_DEPLOYED=true")
 		}
 
 		By("waiting for controller-manager to be ready")
