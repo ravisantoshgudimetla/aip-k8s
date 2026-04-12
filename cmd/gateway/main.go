@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -1050,6 +1051,11 @@ func (s *Server) handlePatchAgentDiagnosticStatus(w http.ResponseWriter, r *http
 
 		if !exists {
 			if err := s.client.Create(r.Context(), &summary); err != nil {
+				if apierrors.IsAlreadyExists(err) {
+					// Concurrent Create won the race; synthesise a Conflict so
+					// retry.RetryOnConflict re-runs the Get → mutate → Patch sequence.
+					return apierrors.NewConflict(schema.GroupResource{}, summaryName, err)
+				}
 				return err
 			}
 			// When the summary CR is newly created its counters start at zero.
