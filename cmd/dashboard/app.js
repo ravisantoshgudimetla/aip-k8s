@@ -27,9 +27,15 @@ async function apiFetch(url, opts = {}) {
     const headers = { ...(opts.headers || {}) };
     if (token) headers['Authorization'] = 'Bearer ' + token;
     const resp = await fetch(url, { ...opts, headers });
-    if (resp.status === 401 || resp.redirected) {
+    if (resp.status === 401 || (state.proxyAuth && resp.redirected)) {
         if (state.proxyAuth) {
-            window.location.reload();
+            const count = parseInt(sessionStorage.getItem('reload-count') || '0', 10);
+            if (count < 3) {
+                sessionStorage.setItem('reload-count', (count + 1).toString());
+                window.location.reload();
+            } else {
+                showBanner('Session expired. Authentication redirect failed.', 'error');
+            }
             return resp;
         }
         showBanner('Session expired — please re-enter your token.', 'error');

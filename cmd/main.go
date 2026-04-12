@@ -218,8 +218,9 @@ func main() {
 		setupLog.Error(err, "Failed to set up health check")
 		os.Exit(1)
 	}
-	if err := mgr.AddReadyzCheck("readyz", func(_ *http.Request) error {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	const ReadyzTimeout = 5 * time.Second
+	if err := mgr.AddReadyzCheck("readyz", func(req *http.Request) error {
+		ctx, cancel := context.WithTimeout(req.Context(), ReadyzTimeout)
 		defer cancel()
 		if !mgr.GetCache().WaitForCacheSync(ctx) {
 			return errors.New("caches did not sync")

@@ -199,9 +199,11 @@ var _ = Describe("Chart", Ordered, func() {
 			resp := httpGet(gatewayURL + "/governed-resources")
 			defer resp.Body.Close() //nolint:errcheck
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
-			var items []interface{}
-			Expect(json.NewDecoder(resp.Body).Decode(&items)).To(Succeed())
-			Expect(items).NotTo(BeNil())
+			var list struct {
+				Items []interface{} `json:"items"`
+			}
+			Expect(json.NewDecoder(resp.Body).Decode(&list)).To(Succeed())
+			Expect(list.Items).NotTo(BeNil())
 		})
 	})
 
