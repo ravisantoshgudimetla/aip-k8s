@@ -39,6 +39,8 @@ async function apiFetch(url, opts = {}) {
             return resp;
         }
         showBanner('Session expired — please re-enter your token.', 'error');
+    } else if (state.proxyAuth) {
+        sessionStorage.removeItem('reload-count');
     }
     return resp;
 }
