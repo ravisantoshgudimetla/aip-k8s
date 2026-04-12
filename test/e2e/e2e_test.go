@@ -85,12 +85,16 @@ var _ = Describe("Manager", Ordered, func() {
 		}
 
 		By("deploying the controller-manager (skips if already running)")
-		checkCmd := exec.Command("kubectl", "get", "deployment",
-			"aip-k8s-controller-manager", "-n", namespace)
-		if _, checkErr := utils.Run(checkCmd); checkErr != nil {
-			cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+		if os.Getenv("HELM_DEPLOYED") != "true" {
+			checkCmd := exec.Command("kubectl", "get", "deployment",
+				"aip-k8s-controller-manager", "-n", namespace)
+			if _, checkErr := utils.Run(checkCmd); checkErr != nil {
+				cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+			}
+		} else {
+			By("skipping make deploy; HELM_DEPLOYED=true")
 		}
 	})
 
