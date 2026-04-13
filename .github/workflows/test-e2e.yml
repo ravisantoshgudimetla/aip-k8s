@@ -4,7 +4,15 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - 'ep/**'
+      - 'docs/**'
+      - '**/*.md'
   pull_request:
+    paths-ignore:
+      - 'ep/**'
+      - 'docs/**'
+      - '**/*.md'
 
 env:
   KIND_VERSION: v0.31.0

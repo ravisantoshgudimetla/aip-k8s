@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - 'ep/**'
+      - 'docs/**'
+      - '**/*.md'
   release:
     types: [published]
 
