@@ -1384,9 +1384,12 @@ func (s *Server) handleListAgentRequests(w http.ResponseWriter, r *http.Request)
 		listOpts = append(listOpts, client.MatchingLabels(matchLabels))
 	}
 	if limitStr != "" {
-		if limit, err := strconv.ParseInt(limitStr, 10, 64); err == nil {
-			listOpts = append(listOpts, client.Limit(limit))
+		limit, err := strconv.ParseInt(limitStr, 10, 64)
+		if err != nil || limit <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid limit: must be a positive integer")
+			return
 		}
+		listOpts = append(listOpts, client.Limit(limit))
 	}
 	if continueToken != "" {
 		listOpts = append(listOpts, client.Continue(continueToken))
@@ -1434,9 +1437,12 @@ func (s *Server) handleListAuditRecords(w http.ResponseWriter, r *http.Request) 
 		listOpts = append(listOpts, client.MatchingLabels{"aip.io/agentRequestRef": agentReq})
 	}
 	if limitStr != "" {
-		if limit, err := strconv.ParseInt(limitStr, 10, 64); err == nil {
-			listOpts = append(listOpts, client.Limit(limit))
+		limit, err := strconv.ParseInt(limitStr, 10, 64)
+		if err != nil || limit <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid limit: must be a positive integer")
+			return
 		}
+		listOpts = append(listOpts, client.Limit(limit))
 	}
 	if continueToken != "" {
 		listOpts = append(listOpts, client.Continue(continueToken))
@@ -1479,15 +1485,26 @@ func (s *Server) handleListAgentDiagnostics(w http.ResponseWriter, r *http.Reque
 	limitStr := r.URL.Query().Get("limit")
 	continueToken := r.URL.Query().Get("continue")
 
+	caStr := r.URL.Query().Get("createdAfter")
+	cbStr := r.URL.Query().Get("createdBefore")
+	hasTimeFilter := caStr != "" || cbStr != ""
+
+	// Pagination and time-range filtering are mutually exclusive: fetching a page
+	// from etcd and then dropping items in-memory breaks continuation semantics.
+	if hasTimeFilter && (limitStr != "" || continueToken != "") {
+		writeError(w, http.StatusBadRequest, "pagination (limit/continue) cannot be combined with createdAfter/createdBefore")
+		return
+	}
+
 	var err error
 	var ca, cb time.Time
-	if caStr := r.URL.Query().Get("createdAfter"); caStr != "" {
+	if caStr != "" {
 		if ca, err = time.Parse(time.RFC3339, caStr); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid createdAfter")
 			return
 		}
 	}
-	if cbStr := r.URL.Query().Get("createdBefore"); cbStr != "" {
+	if cbStr != "" {
 		if cb, err = time.Parse(time.RFC3339, cbStr); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid createdBefore")
 			return
@@ -1506,9 +1523,12 @@ func (s *Server) handleListAgentDiagnostics(w http.ResponseWriter, r *http.Reque
 		listOpts = append(listOpts, client.MatchingLabels(matchLabels))
 	}
 	if limitStr != "" {
-		if limit, err := strconv.ParseInt(limitStr, 10, 64); err == nil {
-			listOpts = append(listOpts, client.Limit(limit))
+		limit, err := strconv.ParseInt(limitStr, 10, 64)
+		if err != nil || limit <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid limit: must be a positive integer")
+			return
 		}
+		listOpts = append(listOpts, client.Limit(limit))
 	}
 	if continueToken != "" {
 		listOpts = append(listOpts, client.Continue(continueToken))
@@ -1520,29 +1540,36 @@ func (s *Server) handleListAgentDiagnostics(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	results := make([]v1alpha1.AgentDiagnostic, 0)
-	for _, item := range list.Items {
-		// Remaining in-memory filtering for time bounds.
-		if !ca.IsZero() && !item.CreationTimestamp.After(ca) {
-			continue
+	if hasTimeFilter {
+		// In-memory time filtering and sort only when not paginating.
+		results := make([]v1alpha1.AgentDiagnostic, 0, len(list.Items))
+		for _, item := range list.Items {
+			if !ca.IsZero() && !item.CreationTimestamp.After(ca) {
+				continue
+			}
+			if !cb.IsZero() && !item.CreationTimestamp.Time.Before(cb) {
+				continue
+			}
+			results = append(results, item)
 		}
-		if !cb.IsZero() && !item.CreationTimestamp.Time.Before(cb) {
-			continue
-		}
-		results = append(results, item)
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].CreationTimestamp.After(results[j].CreationTimestamp.Time)
+		})
+		writeJSON(w, http.StatusOK, results)
+		return
 	}
 
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].CreationTimestamp.After(results[j].CreationTimestamp.Time)
-	})
-
+	items := list.Items
+	if items == nil {
+		items = []v1alpha1.AgentDiagnostic{}
+	}
 	if limitStr != "" || continueToken != "" {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"items":    results,
+			"items":    items,
 			"continue": list.Continue,
 		})
 	} else {
-		writeJSON(w, http.StatusOK, results)
+		writeJSON(w, http.StatusOK, items)
 	}
 }
 
