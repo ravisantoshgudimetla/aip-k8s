@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -59,19 +60,27 @@ var _ = Describe("Phase 7: Gateway OIDC Authentication", Ordered, func() {
 		cmdPath := projDir + "/cmd/gateway"
 
 		By("ensuring governance CRDs are installed")
-		cmd := exec.Command("make", "install")
-		cmd.Dir = projDir
-		out, err := cmd.CombinedOutput()
-		Expect(err).NotTo(HaveOccurred(), "failed to install CRDs: %s", string(out))
+		if os.Getenv("HELM_DEPLOYED") != "true" {
+			cmd := exec.Command("make", "install")
+			cmd.Dir = projDir
+			out, err := cmd.CombinedOutput()
+			Expect(err).NotTo(HaveOccurred(), "failed to install CRDs: %s", string(out))
+		} else {
+			By("skipping make install; HELM_DEPLOYED=true")
+		}
 
 		By("ensuring controller-manager is deployed (skips if already running)")
-		checkCmd := exec.Command("kubectl", "get", "deployment",
-			"aip-k8s-controller-manager", "-n", "aip-k8s-system")
-		if _, checkErr := utils.Run(checkCmd); checkErr != nil {
-			cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
-			cmd.Dir = projDir
-			out, err = cmd.CombinedOutput()
-			Expect(err).NotTo(HaveOccurred(), "failed to deploy controller-manager: %s", string(out))
+		if os.Getenv("HELM_DEPLOYED") != "true" {
+			checkCmd := exec.Command("kubectl", "get", "deployment",
+				"aip-k8s-controller-manager", "-n", "aip-k8s-system")
+			if _, checkErr := utils.Run(checkCmd); checkErr != nil {
+				cmd := exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
+				cmd.Dir = projDir
+				out, err := cmd.CombinedOutput()
+				Expect(err).NotTo(HaveOccurred(), "failed to deploy controller-manager: %s", string(out))
+			}
+		} else {
+			By("skipping make deploy; HELM_DEPLOYED=true")
 		}
 
 		By("waiting for controller-manager to be ready")
@@ -86,9 +95,9 @@ var _ = Describe("Phase 7: Gateway OIDC Authentication", Ordered, func() {
 		}, 2*time.Minute, 2*time.Second).Should(Succeed())
 
 		// 2. Build gateway binary
-		cmd = exec.Command("go", "build", "-o", binPath, cmdPath)
+		cmd := exec.Command("go", "build", "-o", binPath, cmdPath)
 		cmd.Dir = projDir
-		out, err = cmd.CombinedOutput()
+		out, err := cmd.CombinedOutput()
 		Expect(err).NotTo(HaveOccurred(), "failed to build gateway: %s", string(out))
 
 		// 3. Start gateway subprocess
