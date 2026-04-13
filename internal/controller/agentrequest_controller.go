@@ -440,10 +440,21 @@ func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, agentReq 
 		})
 	}
 
+	policyEvalLabels := map[string]string{
+		"aip.io/agentRequestRef": agentReq.Name,
+	}
+	if agentIdentity, ok := agentReq.Labels["aip.io/agentIdentity"]; ok && agentIdentity != "" {
+		policyEvalLabels["aip.io/agentIdentity"] = agentIdentity
+	}
+	if corrID, ok := agentReq.Labels["aip.io/correlationID"]; ok && corrID != "" {
+		policyEvalLabels["aip.io/correlationID"] = corrID
+	}
+
 	policyEvalAudit := &governancev1alpha1.AuditRecord{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: agentReq.Name + "-audit-",
 			Namespace:    agentReq.Namespace,
+			Labels:       policyEvalLabels,
 		},
 		Spec: governancev1alpha1.AuditRecordSpec{
 			Timestamp:         metav1.NewTime(r.now()),
@@ -829,7 +840,12 @@ func (r *AgentRequestReconciler) releaseLock(ctx context.Context, req *governanc
 
 // emitAuditRecord creates a new AuditRecord CR
 func (r *AgentRequestReconciler) emitAuditRecord(ctx context.Context, req *governancev1alpha1.AgentRequest, eventType string, fromPhase string, toPhase string) error {
-	auditLabels := map[string]string{}
+	auditLabels := map[string]string{
+		"aip.io/agentRequestRef": req.Name,
+	}
+	if agentIdentity, ok := req.Labels["aip.io/agentIdentity"]; ok && agentIdentity != "" {
+		auditLabels["aip.io/agentIdentity"] = agentIdentity
+	}
 	if corrID, ok := req.Labels["aip.io/correlationID"]; ok && corrID != "" {
 		auditLabels["aip.io/correlationID"] = corrID
 	}

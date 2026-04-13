@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -390,7 +391,10 @@ func (s *Server) checkDuplicate(
 		return nil, nil
 	}
 	var existing v1alpha1.AgentRequestList
-	if err := s.client.List(ctx, &existing, client.InNamespace(ns)); err != nil {
+	if err := s.client.List(ctx, &existing,
+		client.InNamespace(ns),
+		client.MatchingLabels{"aip.io/agentIdentity": sanitizeLabelValue(agentIdentity)},
+	); err != nil {
 		return nil, fmt.Errorf("failed to check for duplicate requests: %v", err)
 	}
 	cutoff := time.Now().Add(-s.dedupWindow)
@@ -427,7 +431,13 @@ func (s *Server) checkDiagnosticDuplicate(
 		return nil, nil
 	}
 	var existing v1alpha1.AgentDiagnosticList
-	if err := s.client.List(ctx, &existing, client.InNamespace(ns)); err != nil {
+	if err := s.client.List(ctx, &existing,
+		client.InNamespace(ns),
+		client.MatchingLabels{
+			"aip.io/agentIdentity": sanitizeLabelValue(agentIdentity),
+			"aip.io/correlationID": sanitizeLabelValue(correlationID),
+		},
+	); err != nil {
 		return nil, fmt.Errorf("failed to check for duplicate diagnostics: %v", err)
 	}
 	cutoff := time.Now().Add(-s.dedupWindow)
@@ -506,7 +516,9 @@ func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request
 		parameters = &apiextensionsv1.JSON{Raw: body.Parameters}
 	}
 
-	reqLabels := map[string]string{}
+	reqLabels := map[string]string{
+		"aip.io/agentIdentity": sanitizeLabelValue(body.AgentIdentity),
+	}
 	if body.CorrelationID != "" {
 		reqLabels["aip.io/correlationID"] = sanitizeLabelValue(body.CorrelationID)
 	}
@@ -1355,8 +1367,29 @@ func (s *Server) handleListAgentRequests(w http.ResponseWriter, r *http.Request)
 		ns = defaultNamespace
 	}
 
+	agentID := r.URL.Query().Get("agentIdentity")
+	correlID := r.URL.Query().Get("correlationID")
+	limitStr := r.URL.Query().Get("limit")
+	continueToken := r.URL.Query().Get("continue")
+
+	listOpts := []client.ListOption{client.InNamespace(ns)}
+	if agentID != "" {
+		listOpts = append(listOpts, client.MatchingLabels{"aip.io/agentIdentity": sanitizeLabelValue(agentID)})
+	}
+	if correlID != "" {
+		listOpts = append(listOpts, client.MatchingLabels{"aip.io/correlationID": sanitizeLabelValue(correlID)})
+	}
+	if limitStr != "" {
+		if limit, err := strconv.ParseInt(limitStr, 10, 64); err == nil {
+			listOpts = append(listOpts, client.Limit(limit))
+		}
+	}
+	if continueToken != "" {
+		listOpts = append(listOpts, client.Continue(continueToken))
+	}
+
 	var list v1alpha1.AgentRequestList
-	if err := s.client.List(r.Context(), &list, client.InNamespace(ns)); err != nil {
+	if err := s.client.List(r.Context(), &list, listOpts...); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1365,7 +1398,15 @@ func (s *Server) handleListAgentRequests(w http.ResponseWriter, r *http.Request)
 	if items == nil {
 		items = []v1alpha1.AgentRequest{}
 	}
-	writeJSON(w, http.StatusOK, items)
+
+	if limitStr != "" || continueToken != "" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"items":    items,
+			"continue": list.Continue,
+		})
+	} else {
+		writeJSON(w, http.StatusOK, items)
+	}
 }
 
 //nolint:dupl // similar to handleListAgentDiagnostics
@@ -1381,27 +1422,43 @@ func (s *Server) handleListAuditRecords(w http.ResponseWriter, r *http.Request) 
 		ns = defaultNamespace
 	}
 	agentReq := r.URL.Query().Get("agentRequest")
+	limitStr := r.URL.Query().Get("limit")
+	continueToken := r.URL.Query().Get("continue")
+
+	listOpts := []client.ListOption{client.InNamespace(ns)}
+	if agentReq != "" {
+		listOpts = append(listOpts, client.MatchingLabels{"aip.io/agentRequestRef": agentReq})
+	}
+	if limitStr != "" {
+		if limit, err := strconv.ParseInt(limitStr, 10, 64); err == nil {
+			listOpts = append(listOpts, client.Limit(limit))
+		}
+	}
+	if continueToken != "" {
+		listOpts = append(listOpts, client.Continue(continueToken))
+	}
 
 	var list v1alpha1.AuditRecordList
-	if err := s.client.List(r.Context(), &list, client.InNamespace(ns)); err != nil {
+	if err := s.client.List(r.Context(), &list, listOpts...); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	var results []v1alpha1.AuditRecord
-	for _, item := range list.Items {
-		if agentReq == "" || item.Spec.AgentRequestRef == agentReq {
-			results = append(results, item)
-		}
-	}
-	if results == nil {
-		results = []v1alpha1.AuditRecord{}
+	items := list.Items
+	if items == nil {
+		items = []v1alpha1.AuditRecord{}
 	}
 
-	writeJSON(w, http.StatusOK, results)
+	if limitStr != "" || continueToken != "" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"items":    items,
+			"continue": list.Continue,
+		})
+	} else {
+		writeJSON(w, http.StatusOK, items)
+	}
 }
 
-//nolint:dupl // similar to handleListAuditRecords
 func (s *Server) handleListAgentDiagnostics(w http.ResponseWriter, r *http.Request) {
 	sub := callerSubFromCtx(r.Context())
 	if s.authRequired && sub == "" {
@@ -1415,6 +1472,8 @@ func (s *Server) handleListAgentDiagnostics(w http.ResponseWriter, r *http.Reque
 	}
 	agentID := r.URL.Query().Get("agentIdentity")
 	correlID := r.URL.Query().Get("correlationID")
+	limitStr := r.URL.Query().Get("limit")
+	continueToken := r.URL.Query().Get("continue")
 
 	var err error
 	var ca, cb time.Time
@@ -1431,20 +1490,31 @@ func (s *Server) handleListAgentDiagnostics(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	listOpts := []client.ListOption{client.InNamespace(ns)}
+	if agentID != "" {
+		listOpts = append(listOpts, client.MatchingLabels{"aip.io/agentIdentity": sanitizeLabelValue(agentID)})
+	}
+	if correlID != "" {
+		listOpts = append(listOpts, client.MatchingLabels{"aip.io/correlationID": sanitizeLabelValue(correlID)})
+	}
+	if limitStr != "" {
+		if limit, err := strconv.ParseInt(limitStr, 10, 64); err == nil {
+			listOpts = append(listOpts, client.Limit(limit))
+		}
+	}
+	if continueToken != "" {
+		listOpts = append(listOpts, client.Continue(continueToken))
+	}
+
 	var list v1alpha1.AgentDiagnosticList
-	if err := s.client.List(r.Context(), &list, client.InNamespace(ns)); err != nil {
+	if err := s.client.List(r.Context(), &list, listOpts...); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	results := make([]v1alpha1.AgentDiagnostic, 0)
 	for _, item := range list.Items {
-		if agentID != "" && item.Spec.AgentIdentity != agentID {
-			continue
-		}
-		if correlID != "" && item.Labels["aip.io/correlationID"] != correlID {
-			continue
-		}
+		// Remaining in-memory filtering for time bounds.
 		if !ca.IsZero() && !item.CreationTimestamp.After(ca) {
 			continue
 		}
@@ -1458,7 +1528,14 @@ func (s *Server) handleListAgentDiagnostics(w http.ResponseWriter, r *http.Reque
 		return results[i].CreationTimestamp.After(results[j].CreationTimestamp.Time)
 	})
 
-	writeJSON(w, http.StatusOK, results)
+	if limitStr != "" || continueToken != "" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"items":    results,
+			"continue": list.Continue,
+		})
+	} else {
+		writeJSON(w, http.StatusOK, results)
+	}
 }
 
 func (s *Server) handleApproveAgentRequest(w http.ResponseWriter, r *http.Request) {
