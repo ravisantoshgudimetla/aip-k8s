@@ -3,10 +3,10 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
     helm.sh/resource-policy: keep
     "helm.sh/hook": pre-install,pre-upgrade
     "helm.sh/hook-weight": "-5"
-    controller-gen.kubebuilder.io/version: v0.20.1
   name: agentdiagnostics.governance.aip.io
 spec:
   group: governance.aip.io
@@ -23,6 +23,9 @@ spec:
       type: string
     - jsonPath: .spec.diagnosticType
       name: Type
+      type: string
+    - jsonPath: .status.verdict
+      name: Verdict
       type: string
     - jsonPath: .spec.summary
       name: Summary
@@ -96,7 +99,32 @@ spec:
             x-kubernetes-validations:
             - message: AgentDiagnostic spec is immutable after creation
               rule: self == oldSelf
+          status:
+            description: AgentDiagnosticStatus defines the observed state of AgentDiagnostic.
+            properties:
+              reviewedAt:
+                description: ReviewedAt is the timestamp of the review. Set server-side.
+                format: date-time
+                type: string
+              reviewedBy:
+                description: |-
+                  ReviewedBy is the identity of the reviewer. Set server-side from the
+                  authenticated caller — never accepted from the request body.
+                type: string
+              reviewerNote:
+                description: ReviewerNote is an optional free-text annotation.
+                maxLength: 512
+                type: string
+              verdict:
+                description: Verdict is the SRE's assessment of this diagnostic.
+                enum:
+                - correct
+                - incorrect
+                - partial
+                type: string
+            type: object
         type: object
     served: true
     storage: true
-    subresources: {}
+    subresources:
+      status: {}

@@ -31,3 +31,5 @@ jobs:
         run: make lint-config
       - name: Run linter
         run: make lint
+      - name: Check Helm CRDs are in sync
+        run: make helm-crds-check

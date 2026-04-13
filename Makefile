@@ -102,6 +102,14 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	"$(GOLANGCI_LINT)" config verify
 
+.PHONY: helm-crds-check
+helm-crds-check: ## Verify Helm chart CRDs match config/crd/bases/ (run after make manifests)
+	@scripts/check-helm-crds.sh
+
+.PHONY: sync-helm-crds
+sync-helm-crds: ## Sync Helm chart CRDs from config/crd/bases/ (run after make manifests)
+	@scripts/sync-helm-crds.sh
+
 ##@ Build
 
 .PHONY: build
