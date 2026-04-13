@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -94,9 +95,9 @@ var _ = Describe("Phase 7: Gateway OIDC Authentication", Ordered, func() {
 		}, 2*time.Minute, 2*time.Second).Should(Succeed())
 
 		// 2. Build gateway binary
-		cmd = exec.Command("go", "build", "-o", binPath, cmdPath)
+		cmd := exec.Command("go", "build", "-o", binPath, cmdPath)
 		cmd.Dir = projDir
-		out, err = cmd.CombinedOutput()
+		out, err := cmd.CombinedOutput()
 		Expect(err).NotTo(HaveOccurred(), "failed to build gateway: %s", string(out))
 
 		// 3. Start gateway subprocess
