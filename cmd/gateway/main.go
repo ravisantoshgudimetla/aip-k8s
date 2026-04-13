@@ -1397,6 +1397,10 @@ func (s *Server) handleListAgentRequests(w http.ResponseWriter, r *http.Request)
 
 	var list v1alpha1.AgentRequestList
 	if err := s.client.List(r.Context(), &list, listOpts...); err != nil {
+		if apierrors.IsBadRequest(err) || apierrors.IsInvalid(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1450,6 +1454,10 @@ func (s *Server) handleListAuditRecords(w http.ResponseWriter, r *http.Request) 
 
 	var list v1alpha1.AuditRecordList
 	if err := s.client.List(r.Context(), &list, listOpts...); err != nil {
+		if apierrors.IsBadRequest(err) || apierrors.IsInvalid(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1536,6 +1544,10 @@ func (s *Server) handleListAgentDiagnostics(w http.ResponseWriter, r *http.Reque
 
 	var list v1alpha1.AgentDiagnosticList
 	if err := s.client.List(r.Context(), &list, listOpts...); err != nil {
+		if apierrors.IsBadRequest(err) || apierrors.IsInvalid(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
