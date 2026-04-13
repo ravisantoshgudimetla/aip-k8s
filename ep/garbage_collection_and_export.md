@@ -47,10 +47,10 @@ The `GCManager` is a background `Runnable` in the controller manager that orches
 
 - **Leader-Election Binding**: The `GCManager` runs only on the leader replica via controller-manager leader election, ensuring only one instance performs GC operations at a time. No additional manual coordination is required.
 - **Paginated Scans**: Uses `Limit` and `Continue` tokens (configurable page size, default: 500) via a direct client (`APIReader`, not the informer cache) to ensure consistency and avoid stale reads.
-- **Token-Bucket Rate Limiting**: Deletions are throttled (default: 100/sec) to prevent watch-event fan-out from overwhelming other controllers. Each deletion emits a watch event to every `AgentDiagnostic`/`AgentRequest`/`AuditRecord` watcher; an unthrottled GC run on a large backlog can spike the API server's event queue.
+- **Token-Bucket Rate Limiting**: Deletions are throttled at the **object level** (default: 100 objects/sec), not at the API-call level. Each deleted object emits a watch event to every watcher of that GVK; an unthrottled GC run on a large backlog can spike the API server's event queue. For `DeleteCollection` batches, the worker acquires N tokens before issuing a batch of N objects — the bucket is never bypassed by a single large `DeleteCollection` call. For individual `Delete` calls, 1 token is consumed per call.
 - **Deletion SLA**: A record is guaranteed to be deleted within one GC interval after its retention window expires (e.g., 7-day retention + 1-hour interval → deleted between day 7 and day 7h1m).
 
-**Note on `DeleteCollection`:** `DeleteCollection` reduces client-to-API-server round trips compared to individual `Delete` calls. It does **not** reduce etcd tombstone pressure — each deletion still writes a tombstone; only etcd compaction removes tombstones. The benefit is purely fewer network calls.
+**Note on `DeleteCollection`:** `DeleteCollection` reduces client-to-API-server round trips compared to individual `Delete` calls. It does **not** reduce etcd tombstone pressure — each deletion still writes a tombstone; only etcd compaction removes tombstones. The benefit is purely fewer network calls. Rate limiting applies at the object level regardless of which deletion mechanism is used.
 
 ### 2. The Export-and-Purge Lifecycle
 
@@ -148,7 +148,7 @@ The `Exporter` interface is generic: `Export(ctx context.Context, obj runtime.Ob
 - [ ] Implement bounded worker pool with bounded input channel and skip-on-full overflow policy.
 - [ ] Implement exponential-backoff retry (base 5s, max 10m, ±20% jitter) bounded by Hard TTL.
 - [ ] Implement paginated list + `DeleteCollection` with configurable page size and token-bucket rate limiter.
-- [ ] Implement `DependencyProvider` interface and `AuditRecord → AgentRequest` registration.
+- [ ] Implement `DependencyProvider` interface and `AuditRecord → AgentRequest` registration. **Do NOT use `SetControllerReference` when creating `AuditRecord` objects** — Kubernetes cascading deletion via owner references would auto-delete `AuditRecord`s when their parent `AgentRequest` is deleted, bypassing the GC manager's retention policy entirely. Use a non-owning label reference instead and rely on `DependencyProvider` for retention-aware deletion.
 - [ ] Add startup validation: reject config where parent `retentionDays` > child `retentionDays` in a dependency pair.
 - [ ] Register `AgentDiagnostic` as the first managed resource; add `AgentRequest` and `AuditRecord` with dependency checks.
 - [ ] Wire `GCManager` into `cmd/main.go` using `mgr.Add()`; document leader-election reliance in code comments.
