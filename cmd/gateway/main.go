@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -390,7 +391,10 @@ func (s *Server) checkDuplicate(
 		return nil, nil
 	}
 	var existing v1alpha1.AgentRequestList
-	if err := s.client.List(ctx, &existing, client.InNamespace(ns)); err != nil {
+	if err := s.client.List(ctx, &existing,
+		client.InNamespace(ns),
+		client.MatchingLabels{"aip.io/agentIdentity": sanitizeLabelValue(agentIdentity)},
+	); err != nil {
 		return nil, fmt.Errorf("failed to check for duplicate requests: %v", err)
 	}
 	cutoff := time.Now().Add(-s.dedupWindow)
@@ -427,7 +431,13 @@ func (s *Server) checkDiagnosticDuplicate(
 		return nil, nil
 	}
 	var existing v1alpha1.AgentDiagnosticList
-	if err := s.client.List(ctx, &existing, client.InNamespace(ns)); err != nil {
+	if err := s.client.List(ctx, &existing,
+		client.InNamespace(ns),
+		client.MatchingLabels{
+			"aip.io/agentIdentity": sanitizeLabelValue(agentIdentity),
+			"aip.io/correlationID": sanitizeLabelValue(correlationID),
+		},
+	); err != nil {
 		return nil, fmt.Errorf("failed to check for duplicate diagnostics: %v", err)
 	}
 	cutoff := time.Now().Add(-s.dedupWindow)
@@ -506,7 +516,9 @@ func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request
 		parameters = &apiextensionsv1.JSON{Raw: body.Parameters}
 	}
 
-	reqLabels := map[string]string{}
+	reqLabels := map[string]string{
+		"aip.io/agentIdentity": sanitizeLabelValue(body.AgentIdentity),
+	}
 	if body.CorrelationID != "" {
 		reqLabels["aip.io/correlationID"] = sanitizeLabelValue(body.CorrelationID)
 	}
@@ -1355,8 +1367,40 @@ func (s *Server) handleListAgentRequests(w http.ResponseWriter, r *http.Request)
 		ns = defaultNamespace
 	}
 
+	agentID := r.URL.Query().Get("agentIdentity")
+	correlID := r.URL.Query().Get("correlationID")
+	limitStr := r.URL.Query().Get("limit")
+	continueToken := r.URL.Query().Get("continue")
+
+	listOpts := []client.ListOption{client.InNamespace(ns)}
+	matchLabels := map[string]string{}
+	if agentID != "" {
+		matchLabels["aip.io/agentIdentity"] = sanitizeLabelValue(agentID)
+	}
+	if correlID != "" {
+		matchLabels["aip.io/correlationID"] = sanitizeLabelValue(correlID)
+	}
+	if len(matchLabels) > 0 {
+		listOpts = append(listOpts, client.MatchingLabels(matchLabels))
+	}
+	if limitStr != "" {
+		limit, err := strconv.ParseInt(limitStr, 10, 64)
+		if err != nil || limit <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid limit: must be a positive integer")
+			return
+		}
+		listOpts = append(listOpts, client.Limit(limit))
+	}
+	if continueToken != "" {
+		listOpts = append(listOpts, client.Continue(continueToken))
+	}
+
 	var list v1alpha1.AgentRequestList
-	if err := s.client.List(r.Context(), &list, client.InNamespace(ns)); err != nil {
+	if err := s.client.List(r.Context(), &list, listOpts...); err != nil {
+		if apierrors.IsBadRequest(err) || apierrors.IsInvalid(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1365,7 +1409,15 @@ func (s *Server) handleListAgentRequests(w http.ResponseWriter, r *http.Request)
 	if items == nil {
 		items = []v1alpha1.AgentRequest{}
 	}
-	writeJSON(w, http.StatusOK, items)
+
+	if limitStr != "" || continueToken != "" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"items":    items,
+			"continue": list.Continue,
+		})
+	} else {
+		writeJSON(w, http.StatusOK, items)
+	}
 }
 
 //nolint:dupl // similar to handleListAgentDiagnostics
@@ -1381,27 +1433,50 @@ func (s *Server) handleListAuditRecords(w http.ResponseWriter, r *http.Request) 
 		ns = defaultNamespace
 	}
 	agentReq := r.URL.Query().Get("agentRequest")
+	limitStr := r.URL.Query().Get("limit")
+	continueToken := r.URL.Query().Get("continue")
+
+	listOpts := []client.ListOption{client.InNamespace(ns)}
+	if agentReq != "" {
+		listOpts = append(listOpts, client.MatchingLabels{"aip.io/agentRequestRef": agentReq})
+	}
+	if limitStr != "" {
+		limit, err := strconv.ParseInt(limitStr, 10, 64)
+		if err != nil || limit <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid limit: must be a positive integer")
+			return
+		}
+		listOpts = append(listOpts, client.Limit(limit))
+	}
+	if continueToken != "" {
+		listOpts = append(listOpts, client.Continue(continueToken))
+	}
 
 	var list v1alpha1.AuditRecordList
-	if err := s.client.List(r.Context(), &list, client.InNamespace(ns)); err != nil {
+	if err := s.client.List(r.Context(), &list, listOpts...); err != nil {
+		if apierrors.IsBadRequest(err) || apierrors.IsInvalid(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	var results []v1alpha1.AuditRecord
-	for _, item := range list.Items {
-		if agentReq == "" || item.Spec.AgentRequestRef == agentReq {
-			results = append(results, item)
-		}
-	}
-	if results == nil {
-		results = []v1alpha1.AuditRecord{}
+	items := list.Items
+	if items == nil {
+		items = []v1alpha1.AuditRecord{}
 	}
 
-	writeJSON(w, http.StatusOK, results)
+	if limitStr != "" || continueToken != "" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"items":    items,
+			"continue": list.Continue,
+		})
+	} else {
+		writeJSON(w, http.StatusOK, items)
+	}
 }
 
-//nolint:dupl // similar to handleListAuditRecords
 func (s *Server) handleListAgentDiagnostics(w http.ResponseWriter, r *http.Request) {
 	sub := callerSubFromCtx(r.Context())
 	if s.authRequired && sub == "" {
@@ -1415,50 +1490,111 @@ func (s *Server) handleListAgentDiagnostics(w http.ResponseWriter, r *http.Reque
 	}
 	agentID := r.URL.Query().Get("agentIdentity")
 	correlID := r.URL.Query().Get("correlationID")
+	limitStr := r.URL.Query().Get("limit")
+	continueToken := r.URL.Query().Get("continue")
 
-	var err error
-	var ca, cb time.Time
-	if caStr := r.URL.Query().Get("createdAfter"); caStr != "" {
-		if ca, err = time.Parse(time.RFC3339, caStr); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid createdAfter")
-			return
-		}
+	caStr := r.URL.Query().Get("createdAfter")
+	cbStr := r.URL.Query().Get("createdBefore")
+	hasTimeFilter := caStr != "" || cbStr != ""
+
+	// Pagination and time-range filtering are mutually exclusive: fetching a page
+	// from etcd and then dropping items in-memory breaks continuation semantics.
+	if hasTimeFilter && (limitStr != "" || continueToken != "") {
+		writeError(w, http.StatusBadRequest, "pagination (limit/continue) cannot be combined with createdAfter/createdBefore")
+		return
 	}
-	if cbStr := r.URL.Query().Get("createdBefore"); cbStr != "" {
-		if cb, err = time.Parse(time.RFC3339, cbStr); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid createdBefore")
+
+	ca, cb, parseErr := parseTimeRange(caStr, cbStr)
+	if parseErr != nil {
+		writeError(w, http.StatusBadRequest, parseErr.Error())
+		return
+	}
+
+	listOpts := []client.ListOption{client.InNamespace(ns)}
+	matchLabels := map[string]string{}
+	if agentID != "" {
+		matchLabels["aip.io/agentIdentity"] = sanitizeLabelValue(agentID)
+	}
+	if correlID != "" {
+		matchLabels["aip.io/correlationID"] = sanitizeLabelValue(correlID)
+	}
+	if len(matchLabels) > 0 {
+		listOpts = append(listOpts, client.MatchingLabels(matchLabels))
+	}
+	if limitStr != "" {
+		limit, err := strconv.ParseInt(limitStr, 10, 64)
+		if err != nil || limit <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid limit: must be a positive integer")
 			return
 		}
+		listOpts = append(listOpts, client.Limit(limit))
+	}
+	if continueToken != "" {
+		listOpts = append(listOpts, client.Continue(continueToken))
 	}
 
 	var list v1alpha1.AgentDiagnosticList
-	if err := s.client.List(r.Context(), &list, client.InNamespace(ns)); err != nil {
+	if err := s.client.List(r.Context(), &list, listOpts...); err != nil {
+		if apierrors.IsBadRequest(err) || apierrors.IsInvalid(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	results := make([]v1alpha1.AgentDiagnostic, 0)
-	for _, item := range list.Items {
-		if agentID != "" && item.Spec.AgentIdentity != agentID {
+	if hasTimeFilter {
+		writeJSON(w, http.StatusOK, filterAndSortDiagnostics(list.Items, ca, cb))
+		return
+	}
+
+	items := list.Items
+	if items == nil {
+		items = []v1alpha1.AgentDiagnostic{}
+	}
+	if limitStr != "" || continueToken != "" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"items":    items,
+			"continue": list.Continue,
+		})
+	} else {
+		writeJSON(w, http.StatusOK, items)
+	}
+}
+
+// parseTimeRange parses RFC3339 after/before strings into time.Time values.
+// Returns an error describing which field was invalid.
+func parseTimeRange(afterStr, beforeStr string) (after, before time.Time, err error) {
+	if afterStr != "" {
+		if after, err = time.Parse(time.RFC3339, afterStr); err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid createdAfter")
+		}
+	}
+	if beforeStr != "" {
+		if before, err = time.Parse(time.RFC3339, beforeStr); err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid createdBefore")
+		}
+	}
+	return after, before, nil
+}
+
+// filterAndSortDiagnostics applies in-memory time-range filtering and returns
+// results sorted newest-first. Only called when pagination is not in use.
+func filterAndSortDiagnostics(items []v1alpha1.AgentDiagnostic, after, before time.Time) []v1alpha1.AgentDiagnostic {
+	results := make([]v1alpha1.AgentDiagnostic, 0, len(items))
+	for _, item := range items {
+		if !after.IsZero() && !item.CreationTimestamp.After(after) {
 			continue
 		}
-		if correlID != "" && item.Labels["aip.io/correlationID"] != correlID {
-			continue
-		}
-		if !ca.IsZero() && !item.CreationTimestamp.After(ca) {
-			continue
-		}
-		if !cb.IsZero() && !item.CreationTimestamp.Time.Before(cb) {
+		if !before.IsZero() && !item.CreationTimestamp.Time.Before(before) {
 			continue
 		}
 		results = append(results, item)
 	}
-
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].CreationTimestamp.After(results[j].CreationTimestamp.Time)
 	})
-
-	writeJSON(w, http.StatusOK, results)
+	return results
 }
 
 func (s *Server) handleApproveAgentRequest(w http.ResponseWriter, r *http.Request) {
