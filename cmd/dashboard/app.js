@@ -10,6 +10,9 @@ function escapeHtml(str) {
         .replace(/'/g, '&#39;');
 }
 
+let previousActiveElement;
+let modalKeydownHandler;
+
 // ── Auth (G-1, G-2) ─────────────────────────────────────────────────────────
 
 function getToken() {
@@ -726,7 +729,17 @@ window.showTab = function(tabName) {
 };
 
 window.loadDiagnostics = async function() {
-    if (!getToken() && !state.proxyAuth) return;
+    if (!getToken() && !state.proxyAuth) {
+        state.diagnostics = [];
+        state.diagnosticsJSON = '';
+        renderDiagnostics();
+        const container = document.getElementById('accuracy-chip-container');
+        if (container) {
+            container.style.display = 'none';
+            container.innerHTML = '';
+        }
+        return;
+    }
     try {
         const ns = document.getElementById('ns-input')?.value.trim() || state.namespace;
         state.namespace = ns;
@@ -1132,16 +1145,63 @@ window.deleteSP = async function(name, ns) {
 // ── Modals (P0) ──────────────────────────────────────────────────────────────
 
 window.openModal = function(title, bodyHtml, footerHtml = '') {
+    previousActiveElement = document.activeElement;
+    const overlay = document.getElementById('modal-overlay');
+    const content = overlay.querySelector('.modal-content');
+    const appRoot = document.getElementById('app-root');
+
     document.getElementById('modal-title').textContent = title;
     document.getElementById('modal-body').innerHTML = bodyHtml;
     document.getElementById('modal-footer').innerHTML = footerHtml;
-    document.getElementById('modal-overlay').style.display = 'flex';
+
+    overlay.style.display = 'flex';
     document.body.style.overflow = 'hidden';
+    if (appRoot) appRoot.setAttribute('aria-hidden', 'true');
+
+    // Focus management: trap focus inside modal
+    const focusableElements = content.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    const firstFocusable = focusableElements[0];
+    const lastFocusable = focusableElements[focusableElements.length - 1];
+
+    if (firstFocusable) {
+        // Small delay to ensure DOM is ready for focus
+        setTimeout(() => firstFocusable.focus(), 50);
+    }
+
+    modalKeydownHandler = function(e) {
+        if (e.key === 'Escape') {
+            closeModal();
+        }
+        if (e.key === 'Tab') {
+            if (e.shiftKey) { // shift + tab
+                if (document.activeElement === firstFocusable) {
+                    lastFocusable.focus();
+                    e.preventDefault();
+                }
+            } else { // tab
+                if (document.activeElement === lastFocusable) {
+                    firstFocusable.focus();
+                    e.preventDefault();
+                }
+            }
+        }
+    };
+    document.addEventListener('keydown', modalKeydownHandler);
 };
 
 window.closeModal = function() {
-    document.getElementById('modal-overlay').style.display = 'none';
+    const overlay = document.getElementById('modal-overlay');
+    const appRoot = document.getElementById('app-root');
+
+    overlay.style.display = 'none';
     document.body.style.overflow = '';
+    if (appRoot) appRoot.removeAttribute('aria-hidden');
+
+    document.removeEventListener('keydown', modalKeydownHandler);
+
+    if (previousActiveElement) {
+        previousActiveElement.focus();
+    }
 };
 
 // Specialized modals
@@ -1164,7 +1224,7 @@ window.viewDiagnosticDetails = function(name) {
     `;
 
     const footer = `
-        <button class="copy-btn" onclick="copyToClipboard('modal-json-content')">Copy to Clipboard</button>
+        <button class="copy-btn" onclick="copyToClipboard(event, 'modal-json-content')">Copy to Clipboard</button>
         <button onclick="closeModal()" style="padding: 0.5rem 1rem; background: transparent; border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-secondary); cursor: pointer;">Close</button>
     `;
 
@@ -1266,15 +1326,19 @@ window.submitDenial = async function(name) {
     await performAction(name, 'deny', reason);
 };
 
-window.copyToClipboard = function(elementId) {
-    // Capture synchronously — window.event is not reliable inside async callbacks
-    // and is not supported in Firefox.
-    const btn = event.target;
+window.copyToClipboard = function(evt, elementId) {
+    if (evt) {
+        evt.preventDefault();
+        evt.stopPropagation();
+    }
     const text = document.getElementById(elementId).innerText;
     navigator.clipboard.writeText(text).then(() => {
-        const oldText = btn.textContent;
-        btn.textContent = 'Copied!';
-        setTimeout(() => btn.textContent = oldText, 2000);
+        const btn = evt ? evt.target : null;
+        if (btn) {
+            const oldText = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(() => btn.textContent = oldText, 2000);
+        }
     });
 };
 
