@@ -50,10 +50,10 @@ The `GCManager` is a background `Runnable` in the controller manager that orches
 - **Paginated Scans**: Uses `Limit` and `Continue` tokens (configurable page size, default: 500) via a direct client (`APIReader`, not the informer cache) to ensure consistency and avoid stale reads.
 - **Token-Bucket Rate Limiting**: Deletions are throttled at the **object level** (default: 100 objects/sec), not at the API-call level. Each deleted object emits a watch event to every watcher of that GVK; an unthrottled GC run on a large backlog can spike the API server's event queue.
 - **Dry Run Mode**: When `--gc-dry-run=true`, the engine identifies expired records and logs them (e.g., `DRY-RUN: would delete AgentDiagnostic production/diag-123 (expired 2d ago)`) but does not issue the `Delete` call. This allows operators to verify paging and retention logic before enabling enforcement.
-- **Global Safety Valve**: To prevent catastrophic misconfiguration (e.g., setting retention to 0 by mistake), GC for a resource type is **skipped** if the total count of that resource in the cluster is below a minimum threshold (default: 10). This ensures a "healthy minimum" remains in etcd for debugging even if GC rules are overly aggressive.
+- **Global Safety Valve**: To prevent catastrophic misconfiguration (e.g., setting retention to 0 accidentally), GC for a resource type is **skipped** if the total count of that resource in the cluster is below a minimum threshold (default: 10). This ensures a "healthy minimum" remains in etcd for debugging even if GC rules are overly aggressive.
 - **Deletion SLA**: When no export is configured, or when export succeeds, a record is guaranteed to be deleted within one GC interval after its retention window expires (e.g., 7-day retention + 1-hour interval → deleted between day 7 and day 7h1m). When export is configured and fails, deletion is delayed by export retries up to the Hard TTL, at which point deletion is unconditional (see Hard TTL Check in the lifecycle below).
 
-**Note on Deletion Mechanism:** While `DeleteCollection` is more network-efficient, Phase 1 uses individual `Delete` calls per object. This allows for precise rate limiting (1 token per object) and ensures that failures in a single delete (e.g., 404 already gone) don't abort a batch.
+**Note on Deletion Mechanism:** Phase 1 uses individual `Delete` calls per object rather than `DeleteCollection`. `DeleteCollection` cannot selectively target individual expired objects within a page — it deletes all matching objects by label selector, not by the per-object TTL check performed in the scan loop. Individual `Delete` calls enable precise rate limiting (1 token per object) and failure isolation: a 404 (already deleted by another actor) or a transient API error on one object does not abort the rest of the batch.
 
 ### 2. The Export-and-Purge Lifecycle
 
@@ -118,12 +118,12 @@ For Phase 1, configuration is delivered via **CLI flags** on the controller mana
 | `--gc-enabled` | `false` | Enable the GC engine |
 | `--gc-interval` | `1h` | Time between GC cycles |
 | `--gc-dry-run` | `true` | Log deletions without acting (default true for safety) |
-| `--gc-diagnostic-retention` | `7d` | Retention window for AgentDiagnostics |
 | `--gc-diagnostic-hard-ttl` | `14d` | Forced deletion window (safety valve) |
-| `--gc-request-retention` | `30d` | Retention window for AgentRequests |
-| `--gc-delete-rate-per-sec` | `100` | Rate limit for object deletions |
+| `--gc-delete-rate-per-sec` | `100` | Rate limit for object deletions (tokens per second) |
+| `--gc-page-size` | `500` | Objects per list page during GC scan |
+| `--gc-safety-min-count` | `10` | Skip GC if total object count is below this threshold |
 
-Full YAML configuration (via `values.yaml` and ConfigMap) is deferred to Phase 2 to support structured export endpoint configuration.
+Full YAML configuration (via `values.yaml` and ConfigMap) is deferred to Phase 2 to support structured export endpoint configuration. The schema below is a **Phase 2 (future)** design — it is not active in Phase 1.
 
 ```yaml
 gc:

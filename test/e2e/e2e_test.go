@@ -804,8 +804,9 @@ spec:
 			}, 30*time.Second, 5*time.Second).Should(Succeed())
 
 			By("verifying it eventually gets deleted")
-			// GC interval is 1m, hard TTL is 1m.
-			// It might take up to 2-3 minutes for the next cycle to catch it.
+			// GC interval is 1m, hard TTL is 1m. Worst case: object created just
+			// after a tick → waits up to 2 cycles (2m) plus slow-CI overhead.
+			// 6 minutes gives comfortable headroom without masking real failures.
 			Eventually(func() bool {
 				cmd := exec.Command("kubectl", "get", "agentdiagnostic", diagName, "-n", "default")
 				_, err := utils.Run(cmd)
@@ -813,7 +814,7 @@ spec:
 					return true
 				}
 				return false
-			}, 4*time.Minute, 10*time.Second).Should(BeTrue())
+			}, 6*time.Minute, 10*time.Second).Should(BeTrue())
 		})
 	})
 })

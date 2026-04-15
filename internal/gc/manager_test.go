@@ -26,13 +26,11 @@ func TestGCManager_Start(t *testing.T) {
 		gm.Expect(err).To(gomega.Succeed())
 	})
 
-	t.Run("Interval tick - worker is called", func(g *testing.T) {
+	t.Run("Start respects context cancellation", func(g *testing.T) {
 		gm := gomega.NewWithT(g)
-		// We can't easily mock the worker instance inside Start since it's
-		// instantiated there. Instead, we verify behavior by using a very short
-		// interval and checking if context cancellation works.
-		// For a more precise test, we could refactor GCManager to accept
-		// a list of workers, but for Phase 1 this is sufficient.
+		// Verifies that Start returns nil when the context is cancelled.
+		// Worker invocation is exercised by the integration and worker unit tests;
+		// a full mock-worker injection would require refactoring GCManager (Phase 2).
 
 		config := DefaultGCConfig()
 		config.Enabled = true

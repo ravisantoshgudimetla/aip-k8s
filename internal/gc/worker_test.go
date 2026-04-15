@@ -3,6 +3,7 @@ package gc
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -383,16 +384,16 @@ func TestGCWorker_Run(t *testing.T) {
 		err := worker.Run(context.Background())
 		gm.Expect(err).NotTo(gomega.HaveOccurred())
 
-		gm.Expect(limiter.waitCount).To(gomega.Equal(5))
+		gm.Expect(limiter.waitCount.Load()).To(gomega.Equal(int64(5)))
 	})
 }
 
 type countingLimiter struct {
 	*rate.Limiter
-	waitCount int
+	waitCount atomic.Int64
 }
 
 func (l *countingLimiter) Wait(ctx context.Context) error {
-	l.waitCount++
+	l.waitCount.Add(1)
 	return l.Limiter.Wait(ctx)
 }

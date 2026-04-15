@@ -66,12 +66,17 @@ func (m *GCManager) Start(ctx context.Context) error {
 			"interval", m.Config.Interval, "hardTTL", m.Config.DiagnosticHardTTL)
 	}
 
+	// Burst must be >= 1; int() truncates so 0.5 → 0 which deadlocks every Wait.
+	burst := int(m.Config.DeleteRatePerSec)
+	if burst < 1 {
+		burst = 1
+	}
 	worker := &GCWorker{
 		APIReader: m.APIReader,
 		Client:    m.Client,
 		Config:    m.Config,
 		Now:       m.Now,
-		Limiter:   rate.NewLimiter(rate.Limit(m.Config.DeleteRatePerSec), int(m.Config.DeleteRatePerSec)),
+		Limiter:   rate.NewLimiter(rate.Limit(m.Config.DeleteRatePerSec), burst),
 	}
 
 	ticker := time.NewTicker(m.Config.Interval)
