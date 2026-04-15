@@ -762,12 +762,14 @@ var _ = Describe("Manager", Ordered, func() {
 				}`, curlCmd)))
 			Expect(err).NotTo(HaveOccurred())
 
+			// 90s: image pull on a cold Kind node (curlimages/curl:latest not pre-loaded)
+			// can take 30-60s in CI before the container even starts.
 			Eventually(func(g Gomega) {
 				logCmd := exec.Command("kubectl", "logs", curlPodName, "-n", namespace)
 				logs, err := utils.Run(logCmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(strings.TrimSpace(logs)).To(Equal("ok"))
-			}, 30*time.Second, 2*time.Second).Should(Succeed())
+			}, 90*time.Second, 2*time.Second).Should(Succeed())
 		})
 
 		It("should verify RBAC permissions for GC (agentdiagnostics delete)", func() {
