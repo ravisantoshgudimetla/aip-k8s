@@ -43,10 +43,13 @@ import (
 const namespace = "aip-k8s-system"
 
 // serviceAccountName created for the project
-const serviceAccountName = "aip-k8s-controller-manager"
+const serviceAccountName = "aip-k8s-controller"
+
+// controllerDeploymentName is the Deployment name for the controller
+const controllerDeploymentName = "aip-k8s-controller"
 
 // metricsServiceName is the name of the metrics service of the project
-const metricsServiceName = "aip-k8s-controller-manager-metrics-service"
+const metricsServiceName = "aip-k8s-controller-metrics-service"
 
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
 const metricsRoleBindingName = "aip-k8s-metrics-binding"
@@ -163,10 +166,7 @@ var _ = Describe("Manager", Ordered, func() {
 
 	Context("Manager", func() {
 		It("should run successfully", func() {
-			if os.Getenv("HELM_DEPLOYED") == "true" {
-				Skip("Manager check is specific to Kustomize naming/labels — skipping in Helm mode")
-			}
-			By("validating that the controller-manager pod is running as expected")
+			By("validating that the controller pod is running as expected")
 			verifyControllerUp := func(g Gomega) {
 				// Get the name of the controller-manager pod
 				cmd := exec.Command("kubectl", "get",
@@ -183,7 +183,7 @@ var _ = Describe("Manager", Ordered, func() {
 				podNames := utils.GetNonEmptyLines(podOutput)
 				g.Expect(podNames).To(HaveLen(1), "expected 1 controller pod running")
 				controllerPodName = podNames[0]
-				g.Expect(controllerPodName).To(ContainSubstring("controller-manager"))
+				g.Expect(controllerPodName).To(ContainSubstring("aip-k8s-controller"))
 
 				// Validate the pod's status
 				cmd = exec.Command("kubectl", "get",
@@ -680,7 +680,7 @@ var _ = Describe("Manager", Ordered, func() {
 		It("should verify the controller has GC flags in the deployment", func() {
 			By("fetching the controller deployment container args")
 			cmd := exec.Command("kubectl", "get", "deployment",
-				"aip-k8s-controller-manager", "-n", namespace,
+				controllerDeploymentName, "-n", namespace,
 				"-o", "jsonpath={.spec.template.spec.containers[0].args}")
 			out, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
