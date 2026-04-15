@@ -42,8 +42,17 @@ import (
 // namespace where the project is deployed in
 const namespace = "aip-k8s-system"
 
-// serviceAccountName created for the project
-const serviceAccountName = "aip-k8s-controller-manager"
+// serviceAccountName created for the project.
+// Kustomize default: aip-k8s-controller-manager
+// Helm (release "aip-k8s"): aip-k8s-controller
+// Set in BeforeAll based on HELM_DEPLOYED.
+var serviceAccountName = "aip-k8s-controller-manager"
+
+// controllerDeploymentName is the Deployment name for the controller.
+// Kustomize default: aip-k8s-controller-manager
+// Helm (release "aip-k8s"): aip-k8s-controller
+// Set in BeforeAll based on HELM_DEPLOYED.
+var controllerDeploymentName = "aip-k8s-controller-manager"
 
 // metricsServiceName is the name of the metrics service of the project
 const metricsServiceName = "aip-k8s-controller-manager-metrics-service"
@@ -58,6 +67,13 @@ var _ = Describe("Manager", Ordered, func() {
 	// enforce the restricted security policy to the namespace, installing CRDs,
 	// and deploying the controller.
 	BeforeAll(func() {
+		if os.Getenv("HELM_DEPLOYED") == "true" {
+			// Helm release name is "aip-k8s"; fullname template produces "aip-k8s"
+			// (release name contains chart name), so resources are named "aip-k8s-<component>".
+			serviceAccountName = "aip-k8s-controller"
+			controllerDeploymentName = "aip-k8s-controller"
+		}
+
 		By("creating manager namespace")
 		// Use apply instead of create so this is idempotent: if Phase 6 BeforeAll
 		// ran first (Ginkgo randomises top-level Describe order) it will have
@@ -680,7 +696,7 @@ var _ = Describe("Manager", Ordered, func() {
 		It("should verify the controller has GC flags in the deployment", func() {
 			By("fetching the controller deployment container args")
 			cmd := exec.Command("kubectl", "get", "deployment",
-				"aip-k8s-controller-manager", "-n", namespace,
+				controllerDeploymentName, "-n", namespace,
 				"-o", "jsonpath={.spec.template.spec.containers[0].args}")
 			out, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
