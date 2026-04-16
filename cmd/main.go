@@ -86,6 +86,8 @@ func main() {
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 
+	const otlpShutdownTimeout = 5 * time.Second
+
 	// GC flags
 	gcCfg := gc.DefaultGCConfig()
 	flag.BoolVar(&gcCfg.Enabled, "gc-enabled", gcCfg.Enabled, "Enable the GC engine.")
@@ -93,6 +95,18 @@ func main() {
 	flag.BoolVar(&gcCfg.DryRun, "gc-dry-run", gcCfg.DryRun, "Log deletions without acting. Defaults true for safety.")
 	flag.DurationVar(&gcCfg.DiagnosticHardTTL, "gc-diagnostic-hard-ttl", gcCfg.DiagnosticHardTTL,
 		"Forced deletion age for AgentDiagnostics regardless of export state.")
+	flag.DurationVar(&gcCfg.DiagnosticRetentionTTL, "gc-diagnostic-retention-ttl", 0,
+		"Soft retention window for AgentDiagnostics. Records past this window are exported "+
+			"before deletion. 0 disables soft retention (hard TTL only).")
+	flag.StringVar(&gcCfg.ExportType, "gc-export-type", "none",
+		"Export provider type. Valid values: none, otlp.")
+	flag.StringVar(&gcCfg.OTLPEndpoint, "gc-otlp-endpoint", "",
+		"OTLP gRPC endpoint for export (e.g. otel-collector:4317). "+
+			"Required when --gc-export-type=otlp and soft retention is enabled.")
+	flag.BoolVar(&gcCfg.OTLPInsecure, "gc-otlp-insecure", gcCfg.OTLPInsecure,
+		"If true, use an insecure connection for OTLP export.")
+	flag.IntVar(&gcCfg.Concurrency, "gc-export-concurrency", 5,
+		"Number of concurrent export workers per resource type.")
 	flag.Int64Var(&gcCfg.PageSize, "gc-page-size", gcCfg.PageSize, "Objects per list page during GC scan.")
 	flag.Float64Var(&gcCfg.DeleteRatePerSec, "gc-delete-rate-per-sec", gcCfg.DeleteRatePerSec,
 		"Max object deletions per second.")
@@ -105,7 +119,37 @@ func main() {
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
+	// Validate ExportType
+	if gcCfg.ExportType != "none" && gcCfg.ExportType != "otlp" {
+		setupLog.Error(nil, "Invalid --gc-export-type", "type", gcCfg.ExportType)
+		os.Exit(1)
+	}
+
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	ctx := ctrl.SetupSignalHandler()
+
+	var gcExporter gc.Exporter
+	if gcCfg.ExportType == "otlp" && gcCfg.DiagnosticRetentionTTL > 0 {
+		if gcCfg.OTLPEndpoint == "" {
+			setupLog.Error(nil, "--gc-otlp-endpoint is required when --gc-export-type=otlp and retention is enabled")
+			os.Exit(1)
+		}
+
+		otlpExp, err := gc.NewOTLPExporter(ctx, gcCfg.OTLPEndpoint, gcCfg.OTLPInsecure)
+		if err != nil {
+			setupLog.Error(err, "Failed to create OTLP exporter")
+			os.Exit(1)
+		}
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), otlpShutdownTimeout)
+			defer cancel()
+			if err := otlpExp.Shutdown(shutdownCtx); err != nil {
+				setupLog.Error(err, "Failed to shutdown OTLP exporter")
+			}
+		}()
+		gcExporter = otlpExp
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -233,6 +277,7 @@ func main() {
 		Client:    mgr.GetClient(),
 		Config:    gcCfg,
 		Now:       time.Now,
+		Exporter:  gcExporter,
 	}
 
 	if err := mgr.Add(gcMgr); err != nil {
@@ -264,7 +309,7 @@ func main() {
 	}
 
 	setupLog.Info("Starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)
 	}
