@@ -57,14 +57,21 @@ T1 — Intent Declaration
   AIP Gateway  →  Agent:  Grant { token: <installation token> }
 
 T2 — Execution
-  Agent  →  GitHub:  OpenPR(branch, commit: nodepools/team-a/config.yaml, title: "[aip:req-xyz] scale team-a")
+  Agent  →  GitHub:  OpenPR(branch, commit: nodepools/team-a/config.yaml)
+  Agent  →  AIP:     PATCH /agent-requests/req-xyz  (transition to Executing)
+                     evidence: { prNumber: 42, repository: "myorg/infra" }
+                     AIP stores this in status.executionEvidence
 
 T3 — Webhook Verification (triggered by GitHub, not the agent)
   GitHub  →  AIP:  POST /hooks/github  (pull_request event: opened/synchronized)
-  AIP:         fetch PR changed files via GitHub Contents API
+                   Header: X-GitHub-Delivery: <unique-event-id>
+  AIP:         dedup on X-GitHub-Delivery — replay protection
+               look up AgentRequest via status.executionEvidence.prNumber + repository
+               (NOT PR title parsing — title is user-editable text)
+               fetch PR changed files via PR Files API (one paginated call)
                check: changed files ⊆ AgentRequest target URI     ← catches intent drift
                check: base blob SHA == status.evaluatedStateFingerprint  ← catches state drift
-               check: AgentRequest phase == Approved               ← catches revocation
+               check: AgentRequest phase == Executing              ← catches revocation
   AIP  →  GitHub:  set commit status "AIP Governance" = success | failure + reason
 
 T4 — Merge Gate
@@ -119,7 +126,7 @@ Platform-specific credential scoping:
 - **Terraform Cloud**: workspace-scoped API token, expires at `timeBoundSeconds`.
 - **K8s**: `TokenRequest` subresource on the agent's `ServiceAccount`, bound to `AgentRequest` name, expires at `timeBoundSeconds`.
 
-The `/token` endpoint is callable while the `AgentRequest` is in `Approved` or `Executing` phase. Each call mints a fresh credential. If the `AgentRequest` is revoked between calls, subsequent calls return `409 Conflict`. Previously minted credentials remain valid until their own expiry — the blast radius is bounded by the platform TTL (maximum 1 hour for GitHub App installation tokens).
+The `/token` endpoint is idempotent within the credential's TTL: the first call mints and caches the credential; subsequent calls return the same token if it has not expired. If the cached token is expired or within 60 seconds of expiry, a fresh one is minted. If the `AgentRequest` is revoked, all subsequent calls return `409 Conflict` regardless of any cached token. Previously delivered credentials remain valid until their own platform TTL — the blast radius is bounded by the platform maximum (1 hour for GitHub App installation tokens).
 
 The agent's baseline identity has no write access to any external system. All write access is mediated through AIP-issued scoped credentials.
 
@@ -215,10 +222,13 @@ type Context struct {
 
 // EnforcementEvent is the normalized event from a platform webhook.
 type EnforcementEvent struct {
-    AgentRequestName string            // extracted from PR title, run message, etc.
+    // AgentRequestName is resolved by looking up status.executionEvidence in the
+    // K8s API — NOT parsed from PR title or run message (user-editable text).
+    AgentRequestName string
     ChangedResources []string          // URIs of resources being mutated
     BaseFingerprints map[string]string // current fingerprint per changed resource
     Action           string
+    DeliveryID       string            // platform event ID for replay dedup (X-GitHub-Delivery etc.)
 }
 
 type CredentialRequest struct {
@@ -334,9 +344,10 @@ Hard enforcement requires either a `WebhookPlugin` (platform pushes events to AI
 - Agent submits `AgentRequest` for `github://myorg/infra/files/main/nodepools/team-a/config.yaml`, `action: open-pr`
 - Controller fetches blob SHA → stores in `status.evaluatedStateFingerprint` → `Approved`
 - Agent receives `Grant.GitHubToken` (scoped to `myorg/infra`, `contents:write`, 1h)
-- Agent creates branch, commits `nodepools/team-a/config.yaml`, opens PR titled `[aip:req-xyz] scale team-a`
-- GitHub fires `pull_request` webhook to AIP
-- AIP fetches PR files, checks `nodepools/team-a/config.yaml` matches target URI, checks blob SHA
+- Agent creates branch, commits `nodepools/team-a/config.yaml`, opens PR
+- Agent calls `PATCH /agent-requests/req-xyz` to transition to `Executing` with evidence `{prNumber: 42, repository: "myorg/infra"}`
+- GitHub fires `pull_request` webhook to AIP (`X-GitHub-Delivery: abc-123`)
+- AIP deduplicates on delivery ID, looks up AgentRequest via stored `prNumber=42 + repository=myorg/infra` (not PR title), fetches PR files via PR Files API, checks `nodepools/team-a/config.yaml` matches target URI, checks blob SHA
 - AIP sets `AIP Governance = success` on the PR head commit
 - Engineer reviews, clicks merge — GitHub enforces required status check
 - Any subsequent push to the PR branch re-triggers the webhook and re-checks

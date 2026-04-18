@@ -100,7 +100,7 @@ Without `GovernedResource.spec.permittedAgents` including the agent's name, the 
 # 1. Register the agent
 aip create agent salesforce-bot --description "Salesforce opportunity sync agent"
 # → creates AgentIdentity CRD
-# → generates API key, stores bcrypt hash in Secret salesforce-bot-key-v1
+# → generates API key, stores SHA-256 hash in Secret salesforce-bot-key-v1
 # → prints key once: aip_live_7f3k9m... (never stored in plaintext)
 
 # 2. Register the governed resource, authorizing this agent
@@ -133,7 +133,7 @@ Used for agents that cannot obtain OIDC tokens — scripts, local dev, SaaS plat
 
 **Key format**: `aip_live_{32-byte crypto/rand hex}` — prefixed for easy scanning/revocation.
 
-**Storage**: the gateway stores only the bcrypt hash in a K8s Secret in the AIP system namespace. The plaintext key is returned once at creation and never stored.
+**Storage**: the gateway stores only the SHA-256 hash in a K8s Secret in the AIP system namespace. The plaintext key is returned once at creation and never stored. bcrypt is appropriate for low-entropy human passwords; API keys are 32 bytes of `crypto/rand` (256 bits of entropy) — SHA-256 is correct here and avoids bcrypt's unnecessary CPU cost.
 
 ```yaml
 # Secret created by aip create agent — managed by AIP controller, not user-edited
@@ -146,7 +146,7 @@ metadata:
     aip.io/agent: salesforce-bot
 type: Opaque
 data:
-  key-hash: <bcrypt hash of the plaintext key>
+  key-hash: <SHA-256 hash of the plaintext key>
   created-at: <RFC3339 timestamp>
 ```
 
@@ -156,7 +156,7 @@ data:
 3. Agent developer updates their environment with the new key
 4. `aip revoke key salesforce-bot --secret salesforce-bot-key-v1` — removes old Secret from `apiKeys`
 
-**Gateway validation**: on each request, the gateway extracts the Bearer token, bcrypt-compares against all active key hashes for all `AgentIdentity` objects. The match resolves the identity name. This is O(n) over active keys — acceptable at human-scale agent counts.
+**Gateway validation**: on each request, the gateway extracts the Bearer token, computes `SHA-256(token)`, and compares against all active key hashes for all `AgentIdentity` objects. The match resolves the identity name. SHA-256 comparison is constant-time via `crypto/subtle.ConstantTimeCompare` to prevent timing attacks. This is O(n) over active keys — acceptable at human-scale agent counts.
 
 ### 4.2 OIDC Federation
 
@@ -197,7 +197,7 @@ func (g *Gateway) resolveIdentity(r *http.Request) (string, error) {
         return "", ErrUnauthenticated
     }
 
-    // Try API key first (prefix check avoids bcrypt on non-key tokens)
+    // Try API key first (prefix check avoids SHA-256 on non-key tokens)
     if strings.HasPrefix(bearer, "aip_live_") {
         name, err := g.resolveAPIKey(r.Context(), bearer)
         if err == nil {
