@@ -221,11 +221,23 @@ runtime validation. Comments drift silently when handlers change.
 
 #### Recommendation
 
-Huma v2. It is the only option that gives OpenAPI 3.1 + request validation +
-problem+json without a second framework layered on top, and the code-first
-style matches how this repo already writes handlers. Option B is a reasonable
-alternative if reviewers want the spec to be a first-class checked-in artifact
-from day one.
+~~Huma v2.~~ **Superseded by maintainer review.** The implementation uses
+**Option B — stdlib + hand-written OpenAPI spec + oapi-codegen** for the
+following reasons (per @ravisantoshgudimetla):
+
+- 25 existing handlers create meaningful rewrite risk with a framework adoption.
+- Watch/SSE endpoints require raw `net/http` (`http.Flusher`) regardless of
+  framework, so Huma would not eliminate the need for stdlib handlers.
+- Go 1.22+ `http.ServeMux` already provides method-aware routing.
+- Keeping business logic decoupled from the framework allows a future swap
+  without rewriting core handler logic.
+- A hand-written spec is a first-class, reviewable artifact; `oapi-codegen`
+  generates typed DTOs and clients from it without coupling the server to a
+  framework.
+
+The spec lives at `api/openapi/v1alpha1/` and types are regenerated via
+`make generate-openapi`. Huma can be reconsidered in a future phase once the
+v1alpha1 surface stabilises.
 
 ### `/v1/` routing and transition window
 
