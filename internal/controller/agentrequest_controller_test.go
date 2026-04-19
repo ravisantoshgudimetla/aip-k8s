@@ -43,9 +43,12 @@ import (
 	"github.com/agent-control-plane/aip-k8s/internal/evaluation/fetchers"
 )
 
+const (
+	resourceName = "test-agent-request"
+)
+
 var _ = Describe("AgentRequest Controller", func() {
 	Context("When reconciling a resource", func() {
-		const resourceName = "test-agent-request"
 
 		ctx := context.Background()
 
@@ -131,7 +134,7 @@ var _ = Describe("AgentRequest Controller", func() {
 				Client:          k8sClient,
 				APIReader:       k8sClient,
 				Scheme:          k8sClient.Scheme(),
-				OpsLockDuration: 5 * time.Minute,
+				OpsLockDuration: testOpsLockDuration,
 				Evaluator:       eval,
 			}
 
@@ -213,7 +216,7 @@ var _ = Describe("AgentRequest Controller", func() {
 				Client:          k8sClient,
 				APIReader:       k8sClient,
 				Scheme:          k8sClient.Scheme(),
-				OpsLockDuration: 5 * time.Minute,
+				OpsLockDuration: testOpsLockDuration,
 				Evaluator:       eval,
 				Clock:           func() time.Time { return frozenFuture },
 			}
@@ -316,7 +319,7 @@ var _ = Describe("AgentRequest Controller", func() {
 				Client:          k8sClient,
 				APIReader:       k8sClient,
 				Scheme:          k8sClient.Scheme(),
-				OpsLockDuration: 5 * time.Minute,
+				OpsLockDuration: testOpsLockDuration,
 				Evaluator:       eval,
 			}
 
@@ -387,7 +390,7 @@ var _ = Describe("AgentRequest Controller", func() {
 				Client:          k8sClient,
 				APIReader:       k8sClient,
 				Scheme:          k8sClient.Scheme(),
-				OpsLockDuration: 5 * time.Minute,
+				OpsLockDuration: testOpsLockDuration,
 				Evaluator:       eval,
 			}
 
@@ -481,7 +484,7 @@ var _ = Describe("AgentRequest Controller", func() {
 				Client:          k8sClient,
 				APIReader:       k8sClient, // Use direct client to avoid cache latency
 				Scheme:          k8sClient.Scheme(),
-				OpsLockDuration: 5 * time.Minute,
+				OpsLockDuration: testOpsLockDuration,
 				Evaluator:       eval,
 			}
 

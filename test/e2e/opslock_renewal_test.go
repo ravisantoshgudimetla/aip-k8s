@@ -35,6 +35,12 @@ import (
 	"github.com/agent-control-plane/aip-k8s/test/utils"
 )
 
+const (
+	defaultEventuallyTimeout = 30 * time.Second
+	longEventuallyTimeout    = 40 * time.Second
+	shortEventuallyPolling   = 2 * time.Second
+)
+
 var _ = Describe("OpsLock Renewal", Ordered, func() {
 	const (
 		grName    = "opslock-renewal-gr"
@@ -65,6 +71,8 @@ var _ = Describe("OpsLock Renewal", Ordered, func() {
 		By("cleaning up resources")
 		// GovernedResource is cluster-scoped — no -n flag
 		cmd := exec.Command("kubectl", "delete", "governedresource", "--all", "--ignore-not-found")
+		// Errors are intentionally ignored because this is best-effort cleanup in test teardown
+		// and failures are non-fatal (e.g. resources may already be absent).
 		_, _ = utils.Run(cmd)
 		cmd = exec.Command("kubectl", "delete", "agentrequest", "--all", "-n", ns, "--ignore-not-found")
 		_, _ = utils.Run(cmd)
@@ -92,7 +100,7 @@ var _ = Describe("OpsLock Renewal", Ordered, func() {
 		By("waiting for Phase=Approved")
 		Eventually(func() string {
 			return getAgentRequestPhase(reqName, ns)
-		}, 30*time.Second).Should(Equal("Approved"))
+		}, defaultEventuallyTimeout).Should(Equal("Approved"))
 
 		By("patching Executing condition on the AgentRequest status")
 		executingPatch := `{"status":{"conditions":[{"type":"Executing","status":"True","reason":"AgentStarted","message":"Agent is executing","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}`
@@ -104,7 +112,7 @@ var _ = Describe("OpsLock Renewal", Ordered, func() {
 		By("waiting for Phase=Executing")
 		Eventually(func() string {
 			return getAgentRequestPhase(reqName, ns)
-		}, 30*time.Second).Should(Equal("Executing"))
+		}, defaultEventuallyTimeout).Should(Equal("Executing"))
 
 		By("fetching the OpsLock lease")
 		var lease coordinationv1.Lease
@@ -122,7 +130,7 @@ var _ = Describe("OpsLock Renewal", Ordered, func() {
 			}
 			g.Expect(found).To(BeTrue(), "Lease not found for request %s", reqName)
 			g.Expect(lease.Spec.RenewTime).NotTo(BeNil(), "Lease RenewTime should be set")
-		}, 30*time.Second).Should(Succeed())
+		}, defaultEventuallyTimeout).Should(Succeed())
 
 		initialRenewTime := lease.Spec.RenewTime.DeepCopy()
 		By(fmt.Sprintf("Initial RenewTime: %v", initialRenewTime))
@@ -135,7 +143,7 @@ var _ = Describe("OpsLock Renewal", Ordered, func() {
 			g.Expect(currentLease.Spec.RenewTime).NotTo(BeNil())
 			g.Expect(currentLease.Spec.RenewTime.After(initialRenewTime.Time)).To(BeTrue(),
 				"RenewTime should have advanced. Initial: %v, Current: %v", initialRenewTime, currentLease.Spec.RenewTime)
-		}, 40*time.Second, 2*time.Second).Should(Succeed())
+		}, longEventuallyTimeout, shortEventuallyPolling).Should(Succeed())
 
 		By("asserting the AgentRequest is still in Executing phase")
 		Expect(getAgentRequestPhase(reqName, ns)).To(Equal("Executing"))

@@ -126,6 +126,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Validate opsLockDuration
+	if *opsLockDuration <= 0 {
+		setupLog.Error(nil, "Invalid --ops-lock-duration: must be greater than 0", "duration", *opsLockDuration)
+		os.Exit(1)
+	}
+
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	ctx := ctrl.SetupSignalHandler()
