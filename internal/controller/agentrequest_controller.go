@@ -306,6 +306,7 @@ func (r *AgentRequestReconciler) checkAgentTransitions(ctx context.Context, agen
 	// Agent signals it started executing
 	if meta.IsStatusConditionTrue(agentReq.Status.Conditions, governancev1alpha1.ConditionExecuting) && agentReq.Status.Phase == governancev1alpha1.PhaseApproved {
 		fromPhase := agentReq.Status.Phase
+		log.FromContext(ctx).Info("Agent signaled Executing, transitioning phase", "from", fromPhase, "to", governancev1alpha1.PhaseExecuting)
 		base := agentReq.DeepCopy()
 		agentReq.Status.Phase = governancev1alpha1.PhaseExecuting
 		agentRequestTotal.WithLabelValues(governancev1alpha1.PhaseExecuting).Inc()
@@ -861,6 +862,7 @@ func (r *AgentRequestReconciler) reconcileExecuting(ctx context.Context, agentRe
 		}
 
 		// Patch RenewTime to heartbeat the lease
+		log.FromContext(ctx).Info("Heartbeating lease", "lease", leaseName, "duration", *lease.Spec.LeaseDurationSeconds)
 		base := lease.DeepCopy()
 		lease.Spec.RenewTime = ptr.To(metav1.NewMicroTime(r.now()))
 		if err := r.Patch(ctx, lease, client.MergeFrom(base)); err != nil {
@@ -869,6 +871,7 @@ func (r *AgentRequestReconciler) reconcileExecuting(ctx context.Context, agentRe
 
 		// Requeue at half the lease duration
 		requeueAfter := time.Duration(*lease.Spec.LeaseDurationSeconds) * time.Second / 2
+		log.FromContext(ctx).Info("Requeueing after heartbeat", "requeueAfter", requeueAfter)
 		return ctrl.Result{RequeueAfter: requeueAfter}, nil
 	}
 

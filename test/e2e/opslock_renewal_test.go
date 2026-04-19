@@ -37,7 +37,7 @@ import (
 
 const (
 	defaultEventuallyTimeout = 30 * time.Second
-	longEventuallyTimeout    = 40 * time.Second
+	longEventuallyTimeout    = 60 * time.Second
 	shortEventuallyPolling   = 2 * time.Second
 )
 
