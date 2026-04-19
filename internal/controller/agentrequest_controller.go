@@ -777,6 +777,37 @@ func (r *AgentRequestReconciler) reconcileExecuting(ctx context.Context, agentRe
 		return ctrl.Result{}, err
 	}
 
+	// Verify ownership before doing anything with the lease.
+	// releaseLock uses the same holderIdentity format.
+	expectedHolder := fmt.Sprintf("%s/%s", agentReq.Spec.AgentIdentity, agentReq.Name)
+	if lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != expectedHolder {
+		actualHolder := ptr.Deref(lease.Spec.HolderIdentity, "unknown")
+		log.FromContext(ctx).Error(nil, "Lease holder mismatch — treating as lost",
+			"lease", leaseName, "expected", expectedHolder, "actual", actualHolder)
+		opsLockExpiredTotal.Inc()
+		agentRequestActive.Dec()
+		agentRequestTotal.WithLabelValues(governancev1alpha1.PhaseFailed).Inc()
+		fromPhase := agentReq.Status.Phase
+		base := agentReq.DeepCopy()
+		meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{
+			Type:    governancev1alpha1.ConditionFailed,
+			Status:  metav1.ConditionTrue,
+			Reason:  governancev1alpha1.DenialCodeLockTimeout,
+			Message: fmt.Sprintf("OpsLock lost: lease held by %q, not this request", actualHolder),
+		})
+		agentReq.Status.Phase = governancev1alpha1.PhaseFailed
+		if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventLockExpired, fromPhase, governancev1alpha1.PhaseFailed); err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventRequestFailed, fromPhase, governancev1alpha1.PhaseFailed); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
 	// Check Lease expiration
 	if lease.Spec.RenewTime != nil && lease.Spec.LeaseDurationSeconds != nil {
 		expirationTime := lease.Spec.RenewTime.Add(time.Duration(*lease.Spec.LeaseDurationSeconds) * time.Second)
