@@ -22,6 +22,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -32,12 +33,10 @@ import (
 
 var _ = Describe("DiagnosticAccuracy Controller", func() {
 	Context("When reconciling AgentRequest verdicts", func() {
-		const (
-			agentIdentity = "test-accuracy-agent"
-			namespace     = "default"
-		)
+		const namespace = "default"
 
 		It("should increment CorrectCount for correct verdict", func() {
+			const agentIdentity = "acc-agent-correct"
 			reqName := "req-correct"
 			agentReq := &governancev1alpha1.AgentRequest{
 				ObjectMeta: metav1.ObjectMeta{
@@ -83,6 +82,7 @@ var _ = Describe("DiagnosticAccuracy Controller", func() {
 		})
 
 		It("should increment IncorrectCount for wrong_diagnosis", func() {
+			const agentIdentity = "acc-agent-incorrect"
 			reqName := "req-incorrect"
 			agentReq := &governancev1alpha1.AgentRequest{
 				ObjectMeta: metav1.ObjectMeta{
@@ -120,15 +120,16 @@ var _ = Describe("DiagnosticAccuracy Controller", func() {
 			summaryName := summaryNameForAgent(agentIdentity)
 			Eventually(func(g Gomega) {
 				g.Expect(k8sClient.Get(context.Background(), types.NamespacedName{Name: summaryName, Namespace: namespace}, summary)).To(Succeed())
-				g.Expect(summary.Status.TotalReviewed).To(Equal(int64(2)))
+				g.Expect(summary.Status.TotalReviewed).To(Equal(int64(1)))
 			}, 5*time.Second).Should(Succeed())
 
-			Expect(summary.Status.CorrectCount).To(Equal(int64(1)))
+			Expect(summary.Status.CorrectCount).To(Equal(int64(0)))
 			Expect(summary.Status.IncorrectCount).To(Equal(int64(1)))
-			Expect(*summary.Status.DiagnosticAccuracy).To(Equal(0.5))
+			Expect(*summary.Status.DiagnosticAccuracy).To(Equal(0.0))
 		})
 
 		It("should NOT affect accuracy for bad_timing", func() {
+			const agentIdentity = "acc-agent-bad-timing"
 			reqName := "req-bad-timing"
 			agentReq := &governancev1alpha1.AgentRequest{
 				ObjectMeta: metav1.ObjectMeta{
@@ -162,17 +163,22 @@ var _ = Describe("DiagnosticAccuracy Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			summary := &governancev1alpha1.DiagnosticAccuracySummary{}
+			// bad_timing is excluded from accuracy; the summary should never be created.
 			summaryName := summaryNameForAgent(agentIdentity)
-			Eventually(func(g Gomega) {
-				g.Expect(k8sClient.Get(context.Background(), types.NamespacedName{Name: summaryName, Namespace: namespace}, summary)).To(Succeed())
-				g.Expect(summary.Status.TotalReviewed).To(Equal(int64(2)))
-			}, 5*time.Second).Should(Succeed())
-
-			Expect(*summary.Status.DiagnosticAccuracy).To(Equal(0.5))
+			Consistently(func() bool {
+				var summary governancev1alpha1.DiagnosticAccuracySummary
+				err := k8sClient.Get(context.Background(),
+					types.NamespacedName{Name: summaryName, Namespace: namespace}, &summary)
+				// Either not found (never created) or TotalReviewed still 0 — both are correct.
+				if apierrors.IsNotFound(err) {
+					return true
+				}
+				return err == nil && summary.Status.TotalReviewed == 0
+			}, 2*time.Second, 200*time.Millisecond).Should(BeTrue())
 		})
 
 		It("should use half weight for partial verdict", func() {
+			const agentIdentity = "acc-agent-partial"
 			reqName := "req-partial"
 			agentReq := &governancev1alpha1.AgentRequest{
 				ObjectMeta: metav1.ObjectMeta{
@@ -210,9 +216,10 @@ var _ = Describe("DiagnosticAccuracy Controller", func() {
 			summaryName := summaryNameForAgent(agentIdentity)
 			Eventually(func(g Gomega) {
 				g.Expect(k8sClient.Get(context.Background(), types.NamespacedName{Name: summaryName, Namespace: namespace}, summary)).To(Succeed())
-				g.Expect(summary.Status.TotalReviewed).To(Equal(int64(3)))
+				g.Expect(summary.Status.TotalReviewed).To(Equal(int64(1)))
 			}, 5*time.Second).Should(Succeed())
 
+			// (0 correct + 0.5 * 1 partial) / 1 total = 0.5
 			Expect(*summary.Status.DiagnosticAccuracy).To(Equal(0.5))
 		})
 

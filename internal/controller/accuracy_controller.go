@@ -92,11 +92,19 @@ func (r *DiagnosticAccuracyReconciler) Reconcile(ctx context.Context, req ctrl.R
 					},
 				}
 				if err := r.Create(ctx, &summary); err != nil {
-					return err
-				}
-				// Get fresh copy after create to ensure resourceVersion is set for status patch
-				if err := r.Get(ctx, summaryNN, &summary); err != nil {
-					return err
+					if !errors.IsAlreadyExists(err) {
+						return err
+					}
+					// Race: another reconcile created it concurrently; fetch the existing object.
+					// RetryOnConflict does not retry AlreadyExists, so we handle it explicitly here.
+					if err := r.Get(ctx, summaryNN, &summary); err != nil {
+						return err
+					}
+				} else {
+					// Get fresh copy after create to ensure resourceVersion is set for status patch
+					if err := r.Get(ctx, summaryNN, &summary); err != nil {
+						return err
+					}
 				}
 			} else {
 				return err
@@ -144,8 +152,7 @@ func (r *DiagnosticAccuracyReconciler) Reconcile(ctx context.Context, req ctrl.R
 	})
 	if err != nil {
 		logger.Error(err, "Failed to update DiagnosticAccuracySummary")
-		// Log but do not fail if the DiagnosticAccuracySummary upsert fails
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil

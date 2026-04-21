@@ -83,6 +83,7 @@ spec:
                   that have been counted in this summary, to prevent double-counting.
                 items:
                   type: string
+                maxItems: 100
                 type: array
               totalReviewed:
                 description: |-

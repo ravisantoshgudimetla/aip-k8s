@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -32,6 +33,10 @@ import (
 	"github.com/agent-control-plane/aip-k8s/api/v1alpha1"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 )
+
+// errVerdictWrongPhase is returned when a verdict is submitted for a request
+// that is not in PhaseAwaitingVerdict.
+var errVerdictWrongPhase = errors.New("verdict only allowed in AwaitingVerdict phase")
 
 var (
 	addr        = flag.String("addr", ":8080", "The address to listen on for HTTP requests")
@@ -871,8 +876,7 @@ func (s *Server) handleVerdictAgentRequest(w http.ResponseWriter, r *http.Reques
 		}
 
 		if agentReq.Status.Phase != v1alpha1.PhaseAwaitingVerdict {
-			return fmt.Errorf("CONFLICT: request is in phase %q, verdict only allowed in AwaitingVerdict",
-				agentReq.Status.Phase)
+			return fmt.Errorf("request is in phase %q: %w", agentReq.Status.Phase, errVerdictWrongPhase)
 		}
 
 		now := metav1.Now()
@@ -889,8 +893,8 @@ func (s *Server) handleVerdictAgentRequest(w http.ResponseWriter, r *http.Reques
 		log.Printf("ERROR: handleVerdictAgentRequest failed for %s: %v", name, err)
 		if apierrors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, "AgentRequest not found")
-		} else if strings.Contains(err.Error(), "CONFLICT:") {
-			writeError(w, http.StatusConflict, strings.TrimPrefix(err.Error(), "CONFLICT: "))
+		} else if errors.Is(err, errVerdictWrongPhase) {
+			writeError(w, http.StatusConflict, err.Error())
 		} else {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to submit verdict: %v", err))
 		}

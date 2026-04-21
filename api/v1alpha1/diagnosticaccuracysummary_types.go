@@ -68,6 +68,7 @@ type DiagnosticAccuracySummaryStatus struct {
 	// RecentVerdicts stores the names of the most recent AgentRequests
 	// that have been counted in this summary, to prevent double-counting.
 	// +optional
+	// +kubebuilder:validation:MaxItems=100
 	RecentVerdicts []string `json:"recentVerdicts,omitempty"`
 }
 

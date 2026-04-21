@@ -167,13 +167,16 @@ func (r *AgentRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request
 					reason = "SoakModeAdmission"
 					message = "Initial phase set to AwaitingVerdict due to GovernedResource SoakMode"
 				}
+			} else if !errors.IsNotFound(err) {
+				return ctrl.Result{}, fmt.Errorf("fetching GovernedResource %s: %w",
+					agentReq.Spec.GovernedResourceRef.Name, err)
 			}
 		}
 
 		log.FromContext(ctx).Info("Initializing AgentRequest phase", "name", agentReq.Name, "phase", phase)
 		base := agentReq.DeepCopy()
 		agentReq.Status.Phase = phase
-		if phase == governancev1alpha1.PhasePending {
+		if phase == governancev1alpha1.PhasePending || phase == governancev1alpha1.PhaseAwaitingVerdict {
 			agentRequestActive.Inc()
 		}
 		agentRequestTotal.WithLabelValues(phase).Inc()

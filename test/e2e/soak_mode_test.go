@@ -159,8 +159,8 @@ var _ = Describe("SoakMode and Accuracy Tracking", Ordered, func() {
 			var summary governancev1alpha1.DiagnosticAccuracySummary
 			err := k8sClient.Get(ctx, types.NamespacedName{Name: summaryName, Namespace: ns}, &summary)
 			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(summary.Status.TotalReviewed).To(Equal(int32(1)))
-			g.Expect(summary.Status.CorrectCount).To(Equal(int32(1)))
+			g.Expect(summary.Status.TotalReviewed).To(Equal(int64(1)))
+			g.Expect(summary.Status.CorrectCount).To(Equal(int64(1)))
 			g.Expect(summary.Status.DiagnosticAccuracy).NotTo(BeNil())
 			g.Expect(*summary.Status.DiagnosticAccuracy).To(BeNumerically("~", 1.0, 0.001))
 		}, 30*time.Second).Should(Succeed())

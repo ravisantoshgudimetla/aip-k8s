@@ -1335,7 +1335,11 @@ window.submitAgentRequestVerdict = async function(name) {
 
     closeModal();
     const req = state.requests.find(r => r.metadata.name === name);
-    const ns = req?.metadata?.namespace || 'default';
+    if (!req) {
+        alert('Request not found: ' + name);
+        return;
+    }
+    const ns = req.metadata.namespace || 'default';
 
     try {
         const response = await apiFetch(`/api/agent-requests/${encodeURIComponent(name)}/verdict?namespace=${encodeURIComponent(ns)}`, {
