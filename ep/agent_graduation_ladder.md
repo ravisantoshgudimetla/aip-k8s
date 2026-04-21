@@ -22,9 +22,11 @@ supervised operation, with cluster administrators controlling the thresholds.
 
 ## Non-Goals
 
-- **Per-namespace graduation overrides.** Trust is cluster-wide. An agent that is `Trusted`
-  in staging but `Observer` in production would produce inconsistent semantics. Teams that
-  need different trust levels per environment should use separate clusters.
+- **Per-namespace graduation overrides.** `AgentTrustProfile` is namespace-scoped in
+  v1alpha1 — trust accumulates independently per namespace. Cross-namespace aggregation
+  (e.g., trust earned in `staging` automatically transferring to `production`) is
+  explicitly out of scope. Teams that need a unified trust signal across environments
+  should use a separate promotion process.
 
 - **Automated mode switching in the agent SDK.** The agent does not decide whether it is
   in observation or execution mode. The control plane decides based on trust level. The
@@ -41,7 +43,7 @@ supervised operation, with cluster administrators controlling the thresholds.
 
 ### 1. The agent SDK has one method
 
-```
+```text
 agentRequest(target, action, reason)
 ```
 
@@ -49,24 +51,31 @@ No mode flag. No trust-level awareness in the agent. The agent always expresses 
 "I want to do X to Y, here is my reasoning." The control plane decides what happens next
 based on the agent's current trust level:
 
-| Trust level | What happens to the request |
-|---|---|
-| `Observer` | Evaluated and graded. Action NOT taken. Agent receives verdict. |
-| `Advisor` | Queued for human approval. Executed if approved. |
-| `Supervised` | Queued for human approval. Executed if approved. |
-| `Trusted` | Auto-approved if `SafetyPolicy` passes. Executed. |
-| `Autonomous` | Auto-approved if `SafetyPolicy` passes. Executed. |
+| Trust level | What happens to the request | Entry criteria |
+|---|---|---|
+| `Observer` | Evaluated and graded. Action NOT taken. Agent receives verdict. | Default for all new agents |
+| `Advisor` | Queued for human approval. Executed if approved. | 10 verdicts, 0.70 accuracy |
+| `Supervised` | Queued for human approval. Executed if approved. | 20 verdicts, 0.85 accuracy, 20 executions |
+| `Trusted` | Auto-approved if `SafetyPolicy` passes. Executed. | 50 verdicts, 0.92 accuracy, 50 executions |
+| `Autonomous` | Auto-approved if `SafetyPolicy` passes. Executed. | 100 verdicts, 0.97 accuracy, 100 executions |
+
+`Advisor` and `Supervised` have identical runtime behavior — human approval required on
+every request. They differ only in the evidence required to reach them. `Advisor` is the
+first execution-capable level (low bar, human always in loop). `Supervised` requires
+proven execution history on top of diagnostic accuracy. The thresholds above are defaults
+from `AgentGraduationPolicy` and are configurable by the cluster admin.
 
 The distinction between `Observer` and the action-taking levels is enforced by the
 control plane, not declared by the agent.
 
-### 2. `AgentDiagnostic` is internal
+### 2. `AgentDiagnostic` is internal and may be eliminated
 
 `AgentDiagnostic` is not part of the agent SDK. Agent developers never create it directly.
-It is an internal CRD used by the control plane to track grading state for `Observer`-level
-requests. Exposing it would force agent developers to reason about two separate resources
-and two separate workflows for what is ultimately one intent: "here is what I found and
-what I would do."
+Grading state for `Observer`-level requests lives on `AgentRequest` status — the verdict
+is patched onto the same resource the agent created. `AgentDiagnostic` has no role in
+this flow and can be removed without any agent-facing impact. It is retained for now only
+to avoid breaking existing users of the direct `AgentDiagnostic` API; a deprecation
+notice will be added when `AwaitingVerdict` phase ships.
 
 ### 3. Enforcement is prescriptive, not descriptive
 
@@ -196,26 +205,29 @@ and know exactly what the agent needs to advance — no policy YAML spelunking r
 
 On every `AgentRequest`:
 
-```
+```text
 1. Find matching GovernedResource for spec.target.uri
    → 404 if no GovernedResource matches (ungoverned target)
 
 2. Fetch AgentTrustProfile for spec.agentIdentity in this namespace
    → treat as Observer if no profile exists yet (first request from a new agent)
 
-3. Check GovernedResource.trustRequirements.minTrustLevel
+3. Check AgentGraduationPolicy for agent's trust level:
+   → canExecute: false  →  skip steps 4–5, route directly to AwaitingVerdict
+      (Observer requests bypass the minTrustLevel floor — grading has no blast radius)
+
+4. Check GovernedResource.trustRequirements.minTrustLevel
    → 403 "Insufficient trust. Current: Advisor, Required: Trusted" if below floor
 
-4. Apply GovernedResource.trustRequirements.maxAutonomyLevel as ceiling
+5. Apply GovernedResource.trustRequirements.maxAutonomyLevel as ceiling
    → cap effective behavior regardless of actual trust level
 
-5. Check AgentGraduationPolicy for this effective trust level:
-   → canExecute: false  →  route to AwaitingVerdict (graded, no action)
+6. Check AgentGraduationPolicy for effective trust level:
    → requiresHumanApproval: true  →  route to Pending (human approval required)
    → requiresHumanApproval: false  →  proceed to SafetyPolicy evaluation
 
-6. SafetyPolicy CEL evaluation
-   → can add restrictions, cannot bypass steps 1–5
+7. SafetyPolicy CEL evaluation
+   → can add restrictions, cannot bypass steps 1–6
 ```
 
 ## Grading Flow (Observer Level)
@@ -224,9 +236,19 @@ When a request routes to `AwaitingVerdict`:
 
 1. Agent's request sits in `AwaitingVerdict` phase. No OpsLock acquired. No action taken.
 2. Dashboard surfaces it for grading alongside the agent's `spec.reason` and `spec.action`.
-3. Reviewer calls `PATCH /agent-requests/{name}/verdict` with `correct / partial / incorrect`.
-4. Gateway persists verdict on request status, upserts `DiagnosticAccuracySummary` for
-   the agent.
+3. Reviewer calls `PATCH /agent-requests/{name}/verdict` with:
+   - `verdict`: `correct | partial | incorrect`
+   - `reasonCode` (required when verdict is `incorrect` or `partial`):
+     `wrong_diagnosis | bad_timing | scope_too_broad | precautionary | policy_block`
+   - `note`: optional free-text annotation
+
+   Only `wrong_diagnosis` counts against `diagnosticAccuracy`. The other reason codes
+   are recorded for audit but do not affect the graduation ladder — denying an agent
+   because of bad timing or scope says nothing about its diagnostic quality.
+
+4. Gateway persists verdict on `AgentRequest` status, upserts `DiagnosticAccuracySummary`
+   for the agent. Only verdicts with `reasonCode: wrong_diagnosis` (or `correct`) update
+   the accuracy counters.
 5. `AgentTrustProfile` controller reconciles: recomputes `diagnosticAccuracy`,
    `trustLevel`, `nextLevelRequirements`.
 6. Request transitions to `Completed` (graded). Agent is notified via status.
@@ -259,12 +281,31 @@ spec:
 | CRD | Role in graduation |
 |---|---|
 | `AgentRequest` | Source of execution history (Advisor+ terminal transitions feed successRate) |
-| `AgentDiagnostic` | Internal grading state for Observer-level requests; not in agent SDK |
+| `AgentDiagnostic` | Legacy CRD; grading state now lives on `AgentRequest` status. Deprecated when `AwaitingVerdict` phase ships. |
 | `DiagnosticAccuracySummary` | Running accuracy ratio per agent; intermediate aggregate feeding AgentTrustProfile |
 | `SafetyPolicy` | Additional restrictions on top of trust gate; cannot bypass it |
 | `GovernedResource` | Defines per-resource trust floor and ceiling via `trustRequirements` |
 | `AgentGraduationPolicy` | Cluster-wide graduation thresholds; owned by cluster admin |
 | `AgentTrustProfile` | Computed trust state per agent; controller-owned; feeds gateway enforcement |
+
+## Known Limitations
+
+**Aggregate accuracy hides per-classification variance.**
+
+`DiagnosticAccuracySummary` and `AgentTrustProfile` track a single aggregate
+`diagnosticAccuracy` per agent. This can give false confidence. An agent with aggregate
+0.91 could be 0.98 on `Nodepool/AtCapacity` (safe to auto-approve) and 0.40 on
+`Network/Partition` (dangerous). The graduation ladder would promote it to `Trusted` and
+auto-approve a network partition diagnosis it has rarely gotten right.
+
+The correct fix is per-classification accuracy: key `DiagnosticAccuracySummary` by
+`(agentIdentity, rootCauseCategory)` and compute per-class scores. `AgentTrustProfile`
+exposes `agent.accuracy['Nodepool/AtCapacity'].score` to CEL. `GovernedResource` can
+require a minimum accuracy for the relevant classification.
+
+This is deferred to a follow-up. For v1alpha1, cluster admins should set conservative
+`AgentGraduationPolicy` thresholds (0.90+) and use `SafetyPolicy` CEL to restrict
+auto-approval to the action types the agent has demonstrably handled well.
 
 ## Open Questions
 

@@ -295,12 +295,13 @@ status:
 
 Gateway decision:
 
-```
+```text
 1. GovernedResource match: karpenter-nodepools ✓
-2. AgentTrustProfile: Advisor
+2. AgentTrustProfile: Advisor → canExecute: true, proceed to floor check
 3. minTrustLevel check: Observer <= Advisor ✓  (floor is Observer, agent is Advisor)
-4. maxAutonomyLevel: Supervised → cap effective level at Supervised
-5. AgentGraduationPolicy: Supervised → requiresHumanApproval: true
+4. maxAutonomyLevel: Supervised — agent is Advisor, which is below the ceiling.
+   No downgrade needed. (Ceiling only matters when agent reaches Trusted or Autonomous.)
+5. AgentGraduationPolicy: Advisor → requiresHumanApproval: true
    → route to Pending phase
 6. OpsLock acquired for gpu-pool.yaml
 7. SafetyPolicy: agentIdentity == "karpenter-nodepool-agent" ✓

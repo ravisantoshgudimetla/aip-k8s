@@ -421,7 +421,7 @@ Hard enforcement requires either a `WebhookPlugin` (platform pushes events to AI
 ### Phase 2 — Verdict Grading + DiagnosticAccuracySummary
 **Goal**: humans grade `AgentRequest` reasoning as correct/partial/incorrect. Aggregate into per-agent accuracy scores. Foundation for agents earning autonomy.
 
-**Key design decision**: `AgentDiagnostic` is an internal CRD — never exposed to agent developers. The agent SDK has one method: `requestAction(target, action, reason)`. No mode flag. The control plane decides the outcome based on trust level:
+**Key design decision**: `AgentDiagnostic` is an internal CRD — never exposed to agent developers. The agent SDK has one method: `agentRequest(target, action, reason)`. No mode flag. The control plane decides the outcome based on trust level:
 
 - `Observer` level → request is evaluated and graded, action is NOT taken. Agent is told the verdict.
 - `Advisor/Supervised` level → request queued for human approval, executed if approved.
