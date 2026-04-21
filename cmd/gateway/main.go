@@ -134,15 +134,6 @@ type reasoningTraceBody struct {
 	Alternatives        []string           `json:"alternatives,omitempty"`
 }
 
-type createAgentDiagnosticBody struct {
-	AgentIdentity  string          `json:"agentIdentity"`
-	DiagnosticType string          `json:"diagnosticType"`
-	CorrelationID  string          `json:"correlationID"`
-	Summary        string          `json:"summary"`
-	Namespace      string          `json:"namespace,omitempty"`
-	Details        json.RawMessage `json:"details,omitempty"`
-}
-
 type createAgentRequestBody struct {
 	AgentIdentity  string                `json:"agentIdentity"`
 	Action         string                `json:"action"`
@@ -273,6 +264,7 @@ func main() {
 	mux.HandleFunc("POST /agent-requests/{name}/completed", server.handleCompletedAgentRequest)
 	mux.HandleFunc("POST /agent-requests/{name}/approve", server.handleApproveAgentRequest)
 	mux.HandleFunc("POST /agent-requests/{name}/deny", server.handleDenyAgentRequest)
+	mux.HandleFunc("PATCH /agent-requests/{name}/verdict", server.handleVerdictAgentRequest)
 	mux.HandleFunc("GET /audit-records", server.handleListAuditRecords)
 	mux.HandleFunc("GET /agent-diagnostics", server.handleListAgentDiagnostics)
 	mux.HandleFunc("POST /agent-diagnostics", server.handleCreateAgentDiagnostic)
@@ -389,46 +381,6 @@ func (s *Server) checkDuplicate(
 	return nil, nil
 }
 
-// checkDiagnosticDuplicate returns a non-nil error and writes a 409 if an active
-// diagnostic for the same (agentIdentity, diagnosticType, correlationID) exists
-// within the dedup window.
-//
-// Note: the List→Create sequence is not atomic. Concurrent requests with the
-// same key can both pass this check and both be created. This is intentional:
-// dedup provides best-effort protection against agent retry floods, not
-// a hard mutual-exclusion guarantee.
-//
-//nolint:dupl // structurally similar to checkDuplicate
-func (s *Server) checkDiagnosticDuplicate(
-	ctx context.Context, agentIdentity, diagnosticType, correlationID, ns string,
-) (*v1alpha1.AgentDiagnostic, error) {
-	if s.dedupWindow == 0 {
-		return nil, nil
-	}
-	var existing v1alpha1.AgentDiagnosticList
-	if err := s.client.List(ctx, &existing,
-		client.InNamespace(ns),
-		client.MatchingLabels{
-			"aip.io/agentIdentity": sanitizeLabelValue(agentIdentity),
-			"aip.io/correlationID": sanitizeLabelValue(correlationID),
-		},
-	); err != nil {
-		return nil, fmt.Errorf("failed to check for duplicate diagnostics: %v", err)
-	}
-	cutoff := time.Now().Add(-s.dedupWindow)
-	for _, diag := range existing.Items {
-		if !diag.CreationTimestamp.IsZero() && diag.CreationTimestamp.Time.Before(cutoff) {
-			continue
-		}
-		if diag.Spec.AgentIdentity == agentIdentity &&
-			diag.Spec.DiagnosticType == diagnosticType &&
-			diag.Spec.CorrelationID == correlationID {
-			return &diag, nil
-		}
-	}
-	return nil, nil
-}
-
 // handleWhoAmI returns the caller's identity and their highest role.
 // Used by the dashboard to enable role-aware rendering without a page reload.
 func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
@@ -453,6 +405,7 @@ func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"identity": sub, "role": role})
 }
 
+//nolint:gocyclo // handler covers full admission pipeline: auth, dedup, GR match, SoakMode, create, poll
 func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
 
@@ -561,10 +514,23 @@ func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request
 	}
 
 admissionPassed:
+	var soakMode bool
 	if matchedGR != nil {
 		agentReq.Spec.GovernedResourceRef = &v1alpha1.GovernedResourceRef{
 			Name:       matchedGR.Name,
 			Generation: matchedGR.Generation,
+		}
+		if matchedGR.Spec.SoakMode {
+			soakMode = true
+			agentReq.Status.Phase = v1alpha1.PhaseAwaitingVerdict
+			// Set RequestSubmitted condition to prevent AgentRequest controller from
+			// initializing this to Pending.
+			meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{
+				Type:    "RequestSubmitted",
+				Status:  metav1.ConditionTrue,
+				Reason:  "SoakModeAdmission",
+				Message: "Initial phase set to AwaitingVerdict due to GovernedResource SoakMode",
+			})
 		}
 	}
 
@@ -588,6 +554,10 @@ admissionPassed:
 		return
 	}
 
+	// Capture target status before Create() strips it
+	targetPhase := agentReq.Status.Phase
+	targetConditions := agentReq.Status.Conditions
+
 	if err := s.client.Create(r.Context(), agentReq); err != nil {
 		if apierrors.IsInvalid(err) || apierrors.IsBadRequest(err) || apierrors.IsAlreadyExists(err) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid AgentRequest: %v", err))
@@ -595,6 +565,24 @@ admissionPassed:
 		}
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create AgentRequest: %v", err))
 		return
+	}
+
+	// If SoakMode is enabled, we must patch the status because Create() ignores it.
+	if soakMode {
+		log.Printf("DEBUG: SoakMode patch starting for %s", agentReq.Name)
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			var current v1alpha1.AgentRequest
+			if err := s.client.Get(r.Context(), types.NamespacedName{Name: agentReq.Name, Namespace: ns}, &current); err != nil {
+				return err
+			}
+			base := current.DeepCopy()
+			current.Status.Phase = targetPhase
+			current.Status.Conditions = targetConditions
+			log.Printf("DEBUG: Patching %s to phase %s", agentReq.Name, targetPhase)
+			return s.client.Status().Patch(r.Context(), &current, client.MergeFrom(base))
+		}); err != nil {
+			log.Printf("ERROR: failed to set initial SoakMode status for %s: %v", agentReq.Name, err)
+		}
 	}
 
 	s.pollAgentRequestPhase(w, r, agentReq.Name, ns, reqLabels)
@@ -629,7 +617,8 @@ func (s *Server) pollAgentRequestPhase(
 
 			phase := current.Status.Phase
 			if phase == v1alpha1.PhaseApproved || phase == v1alpha1.PhaseDenied ||
-				phase == v1alpha1.PhaseCompleted || phase == v1alpha1.PhaseFailed {
+				phase == v1alpha1.PhaseCompleted || phase == v1alpha1.PhaseFailed ||
+				phase == v1alpha1.PhaseAwaitingVerdict {
 				writeJSON(w, http.StatusCreated, map[string]any{
 					"name":                     current.Name,
 					"labels":                   reqLabels,
@@ -832,6 +821,18 @@ func sanitizeLabelValue(s string) string {
 }
 
 func (s *Server) handleCreateAgentDiagnostic(w http.ResponseWriter, r *http.Request) {
+	const msg = "AgentDiagnostic is deprecated. Use AgentRequest with a GovernedResource " +
+		"that has soakMode: true. See docs/agent-graduation-ladder.md"
+	writeJSON(w, http.StatusGone, map[string]string{"error": msg})
+}
+
+func (s *Server) handleVerdictAgentRequest(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = defaultNamespace
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
 
 	sub := callerSubFromCtx(r.Context())
@@ -839,107 +840,64 @@ func (s *Server) handleCreateAgentDiagnostic(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusUnauthorized, "caller identity required")
 		return
 	}
-	if !requireRole(s.roles, roleAgent, sub, callerGroupsFromCtx(r.Context()), w) {
+	if !requireRole(s.roles, roleReviewer, sub, callerGroupsFromCtx(r.Context()), w) {
 		return
 	}
 
-	var body createAgentDiagnosticBody
+	var body struct {
+		Verdict    string `json:"verdict"`
+		ReasonCode string `json:"reasonCode,omitempty"`
+		Note       string `json:"note,omitempty"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	if body.AgentIdentity == "" || body.DiagnosticType == "" || body.CorrelationID == "" || body.Summary == "" {
-		writeError(w, http.StatusBadRequest, "agentIdentity, diagnosticType, correlationID, and summary are required")
+	if body.Verdict != verdictCorrect && body.Verdict != verdictIncorrect && body.Verdict != verdictPartial {
+		writeError(w, http.StatusBadRequest, "invalid verdict")
 		return
 	}
 
-	if s.authRequired && body.AgentIdentity != sub {
-		writeError(w, http.StatusBadRequest, "agentIdentity must match authenticated caller")
+	if body.Verdict != verdictCorrect && body.ReasonCode == "" {
+		writeError(w, http.StatusBadRequest, "reasonCode is required when verdict is not 'correct'")
 		return
 	}
 
-	ns := body.Namespace
-	if ns == "" {
-		ns = defaultNamespace
-	}
-
-	existing, err := s.checkDiagnosticDuplicate(
-		r.Context(), body.AgentIdentity, body.DiagnosticType, body.CorrelationID, ns)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if existing != nil {
-		diagnosticDedupTotal.Inc()
-		writeJSON(w, http.StatusOK, map[string]any{
-			"name":           existing.Name,
-			"namespace":      existing.Namespace,
-			"createdAt":      existing.CreationTimestamp.Time,
-			"agentIdentity":  existing.Spec.AgentIdentity,
-			"diagnosticType": existing.Spec.DiagnosticType,
-			"correlationID":  existing.Spec.CorrelationID,
-			"summary":        existing.Spec.Summary,
-			"details":        existing.Spec.Details,
-			"status":         existing.Status,
-		})
-		return
-	}
-
-	var details *apiextensionsv1.JSON
-	if len(body.Details) > 0 && string(body.Details) != "null" {
-		details = &apiextensionsv1.JSON{Raw: body.Details}
-	}
-
-	// GenerateName prefix must be a valid DNS segment.
-	// Label values use the looser Kubernetes label-value charset (allows _, .).
-	// Normalize independently so callers can see exactly which labels were stored.
-	safeIdentityForName := sanitizeDNSSegment(body.AgentIdentity, 57)
-	labelAgentIdentity := sanitizeLabelValue(body.AgentIdentity)
-	labelCorrelationID := sanitizeLabelValue(body.CorrelationID)
-	labelDiagnosticType := sanitizeLabelValue(body.DiagnosticType)
-
-	diag := &v1alpha1.AgentDiagnostic{
-		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: fmt.Sprintf("diag-%s-", safeIdentityForName),
-			Namespace:    ns,
-			Labels: map[string]string{
-				"aip.io/correlationID":  labelCorrelationID,
-				"aip.io/agentIdentity":  labelAgentIdentity,
-				"aip.io/diagnosticType": labelDiagnosticType,
-			},
-		},
-		Spec: v1alpha1.AgentDiagnosticSpec{
-			AgentIdentity:  body.AgentIdentity,
-			DiagnosticType: body.DiagnosticType,
-			CorrelationID:  body.CorrelationID,
-			Summary:        body.Summary,
-			Details:        details,
-		},
-	}
-
-	if err := s.client.Create(r.Context(), diag); err != nil {
-		if apierrors.IsInvalid(err) || apierrors.IsBadRequest(err) || apierrors.IsAlreadyExists(err) {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid AgentDiagnostic: %v", err))
-			return
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var agentReq v1alpha1.AgentRequest
+		if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &agentReq); err != nil {
+			return err
 		}
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create AgentDiagnostic: %v", err))
+
+		if agentReq.Status.Phase != v1alpha1.PhaseAwaitingVerdict {
+			return fmt.Errorf("CONFLICT: request is in phase %q, verdict only allowed in AwaitingVerdict",
+				agentReq.Status.Phase)
+		}
+
+		now := metav1.Now()
+		base := agentReq.DeepCopy()
+		agentReq.Status.Verdict = body.Verdict
+		agentReq.Status.VerdictReasonCode = body.ReasonCode
+		agentReq.Status.VerdictNote = body.Note
+		agentReq.Status.VerdictBy = sub
+		agentReq.Status.VerdictAt = &now
+		agentReq.Status.Phase = v1alpha1.PhaseCompleted
+
+		return s.client.Status().Patch(r.Context(), &agentReq, client.MergeFrom(base))
+	}); err != nil {
+		log.Printf("ERROR: handleVerdictAgentRequest failed for %s: %v", name, err)
+		if apierrors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, "AgentRequest not found")
+		} else if strings.Contains(err.Error(), "CONFLICT:") {
+			writeError(w, http.StatusConflict, strings.TrimPrefix(err.Error(), "CONFLICT: "))
+		} else {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to submit verdict: %v", err))
+		}
 		return
 	}
-	diagnosticCreatedTotal.WithLabelValues(body.AgentIdentity).Inc()
 
-	// Return normalized label values so callers can use them in label-selector
-	// queries without having to guess what normalization was applied.
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"name":      diag.Name,
-		"namespace": diag.Namespace,
-		"createdAt": diag.CreationTimestamp.Time,
-		"labels": map[string]string{
-			"aip.io/correlationID":  labelCorrelationID,
-			"aip.io/agentIdentity":  labelAgentIdentity,
-			"aip.io/diagnosticType": labelDiagnosticType,
-		},
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"message": "verdict submitted"})
 }
 
 func (s *Server) handleGetAgentDiagnostic(w http.ResponseWriter, r *http.Request) {
