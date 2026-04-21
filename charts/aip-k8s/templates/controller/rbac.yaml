@@ -48,6 +48,7 @@ rules:
   - agentdiagnostics
   - agentrequests
   - auditrecords
+  - diagnosticaccuracysummaries
   - governedresources
   - safetypolicies
   verbs:
@@ -72,6 +73,7 @@ rules:
   - agentdiagnostics/status
   - agentrequests/status
   - auditrecords/status
+  - diagnosticaccuracysummaries/status
   - governedresources/status
   - safetypolicies/status
   verbs:

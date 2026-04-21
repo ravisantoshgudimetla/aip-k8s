@@ -91,7 +91,7 @@ cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
 
 .PHONY: lint
-lint: golangci-lint ## Run golangci-lint linter
+lint: golangci-lint helm-crds-check helm-rbac-check ## Run golangci-lint linter and chart sync checks
 	"$(GOLANGCI_LINT)" run
 
 .PHONY: lint-fix
@@ -105,6 +105,10 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 .PHONY: helm-crds-check
 helm-crds-check: ## Verify Helm chart CRDs match config/crd/bases/ (run after make manifests)
 	@scripts/check-helm-crds.sh
+
+.PHONY: helm-rbac-check
+helm-rbac-check: ## Verify Helm chart RBAC matches config/rbac/role.yaml (run after make manifests)
+	@scripts/check-helm-rbac.sh
 
 .PHONY: sync-helm-crds
 sync-helm-crds: ## Sync Helm chart CRDs from config/crd/bases/ (run after make manifests)
