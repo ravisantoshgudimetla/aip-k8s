@@ -281,6 +281,33 @@ On every `AgentRequest`:
    → can add restrictions, cannot bypass steps 1–6
 ```
 
+## Deny Flow (Advisor / Supervised Level)
+
+When a human denies a request that reached `Pending`, the deny endpoint accepts a
+`reasonCode` — the same pattern as Observer verdict grading. Only `wrong_execution`
+counts against `successRate`. The others are governance signals that say nothing about
+whether the agent's action was correct.
+
+```
+POST /agent-requests/{name}/deny
+{
+  "reasonCode": "wrong_execution | bad_timing | scope_too_broad | precautionary | policy_block",
+  "note": "optional free-text"
+}
+```
+
+| reasonCode | Counts against successRate? |
+|---|---|
+| `wrong_execution` | Yes — agent proposed the wrong action |
+| `bad_timing` | No — correct action, wrong moment |
+| `scope_too_broad` | No — correct intent, too wide a blast radius |
+| `precautionary` | No — reviewer uncertainty, not agent error |
+| `policy_block` | No — SafetyPolicy or governance rule, not agent quality |
+
+Without this distinction, a team that denies requests frequently for timing or policy
+reasons will never graduate their agent to `Trusted` even if its diagnosis and proposed
+actions are consistently correct.
+
 ## Grading Flow (Observer Level)
 
 When a request routes to `AwaitingVerdict`:
@@ -370,8 +397,20 @@ metadata:
   annotations:
     governance.aip.io/bootstrap-reason: "migrated from internal approval system, 18 months production history"
 spec:
-  trustLevelOverride: Supervised  # cluster admin sets this; controller never overwrites it
+  trustLevelOverride: Supervised
+  overrideExpiresAfterVerdicts: 20  # controller ignores override once 20 verdicts accumulate
+                                    # and computes level normally from that point
 ```
+
+`overrideExpiresAfterVerdicts` defaults to 20. After that many verdicts the bootstrapped
+agent either proved itself or it gets placed at wherever its actual `recentAccuracy`
+puts it. Without this, an agent bootstrapped at `Supervised` whose accuracy drops to
+0.40 would stay `Supervised` indefinitely — the override becomes a permanent bypass of
+the graduation ladder.
+
+The cluster admin can set a higher value for agents with strong prior history that need
+more time to accumulate in-cluster verdicts. They cannot set it to 0 or omit it — the
+controller rejects an override with no expiry.
 
 ## Relationship to Existing CRDs
 
@@ -387,22 +426,43 @@ spec:
 
 ## Known Limitations
 
-**Aggregate accuracy hides per-classification variance.**
+**1. Aggregate accuracy hides per-classification variance.**
 
 `DiagnosticAccuracySummary` and `AgentTrustProfile` track a single aggregate
 `diagnosticAccuracy` per agent. This can give false confidence. An agent with aggregate
-0.91 could be 0.98 on `Nodepool/AtCapacity` (safe to auto-approve) and 0.40 on
-`Network/Partition` (dangerous). The graduation ladder would promote it to `Trusted` and
+0.91 could be 0.98 on `nodepool/at-capacity` (safe to auto-approve) and 0.40 on
+`network/partition` (dangerous). The graduation ladder would promote it to `Trusted` and
 auto-approve a network partition diagnosis it has rarely gotten right.
 
-The correct fix is per-classification accuracy: key `DiagnosticAccuracySummary` by
-`(agentIdentity, rootCauseCategory)` and compute per-class scores. `AgentTrustProfile`
-exposes `agent.accuracy['Nodepool/AtCapacity'].score` to CEL. `GovernedResource` can
-require a minimum accuracy for the relevant classification.
+**Chosen approach for per-classification accuracy (Option A — map in status):**
+`DiagnosticAccuracySummary` keeps its current key (`agentIdentity`). Per-classification
+counts are stored as a map in `status.classifications`:
 
-This is deferred to a follow-up. For v1alpha1, cluster admins should set conservative
-`AgentGraduationPolicy` thresholds (0.90+) and use `SafetyPolicy` CEL to restrict
-auto-approval to the action types the agent has demonstrably handled well.
+```yaml
+status:
+  diagnosticAccuracy: 0.91        # aggregate, for audit
+  classifications:
+    "nodepool/at-capacity": { reviewed: 42, correct: 38, partial: 3, accuracy: 0.95 }
+    "network/partition":    { reviewed: 5,  correct: 2,  partial: 0, accuracy: 0.40 }
+```
+
+This is additive — no key change, no migration. Deferred to a follow-up phase.
+`spec.classification` on `AgentRequest` is recorded now so historical data is available
+for backfill when the map is added.
+
+For v1alpha1, cluster admins should set conservative thresholds (0.90+) and use
+`SafetyPolicy` CEL to restrict auto-approval to action types the agent has handled well.
+
+**2. `spec.reason` is free text — no structured parameters yet.**
+
+Agents encode their diagnosis and recommendation in `spec.reason` as a human-readable
+string. Structured parameters (e.g. `resourceType`, `currentValue`, `suggestedValue`)
+are deferred until real agent implementations reveal the right schema. Different agent
+types will need different parameter shapes.
+
+**Control plane code must never parse `spec.reason`.** It is for human reviewers and
+audit only. Agents that need to pass structured data to downstream systems should use
+a separate out-of-band channel until `spec.parameters` is defined.
 
 ## Open Questions
 
