@@ -535,7 +535,7 @@ var _ = Describe("Manager", Ordered, func() {
 
 		AfterAll(func() {
 			By("cleaning up lock AgentRequests")
-			cmd := exec.Command("kubectl", "delete", "agentrequest", req1Name, req2Name, "-n", ns, "--ignore-not-found")
+			cmd := exec.Command("kubectl", "delete", "agentrequest", "--all", "-n", ns, "--ignore-not-found")
 			_, _ = utils.Run(cmd)
 		})
 

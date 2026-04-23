@@ -57,6 +57,36 @@ var _ = Describe("AgentRequest GC", Ordered, func() {
 			g.Expect(status).To(Equal("True"))
 		}, 2*time.Minute, 2*time.Second).Should(Succeed())
 
+		By("enabling GC on the controller-manager for this test")
+		// GC is off by default in e2e to avoid interfering with other tests that
+		// create terminal AgentRequests. Enable it here and restore it in AfterAll.
+		if os.Getenv("HELM_DEPLOYED") == "true" {
+			imageTag := os.Getenv("IMAGE_TAG")
+			_, err = utils.Run(exec.Command("helm", "upgrade", "aip-k8s", "charts/aip-k8s/",
+				"-n", "aip-k8s-system",
+				"--reuse-values",
+				"--set", fmt.Sprintf("controller.image.tag=%s", imageTag),
+				"--set", fmt.Sprintf("gateway.image.tag=%s", imageTag),
+				"--set", fmt.Sprintf("dashboard.image.tag=%s", imageTag),
+				"--set", "gc.enabled=true",
+				"--set", "gc.interval=1m",
+				"--set", "gc.hardTTL=1m",
+				"--set", "gc.dryRun=false",
+				"--set", "gc.safetyMinCount=1",
+				"--wait", "--timeout", "3m"))
+			Expect(err).NotTo(HaveOccurred(), "failed to enable GC via helm upgrade")
+		} else {
+			gcPatch := `{"spec":{"template":{"spec":{"containers":[{"name":"manager","args":["--leader-elect","--health-probe-bind-address=:8081","--gc-enabled=true","--gc-interval=1m","--gc-hard-ttl=1m","--gc-dry-run=false","--gc-safety-min-count=1","--ops-lock-duration=15s"]}]}}}}`
+			_, err = utils.Run(exec.Command("kubectl", "patch", "deployment",
+				controllerDeploymentName, "-n", "aip-k8s-system",
+				"--type=merge", "-p", gcPatch))
+			Expect(err).NotTo(HaveOccurred(), "failed to enable GC on controller")
+			_, err = utils.Run(exec.Command("kubectl", "rollout", "status",
+				"deployment", controllerDeploymentName, "-n", "aip-k8s-system",
+				"--timeout=2m"))
+			Expect(err).NotTo(HaveOccurred(), "controller rollout after GC enable timed out")
+		}
+
 		By("creating a GovernedResource")
 		grJSON := fmt.Sprintf(`{
 			"apiVersion": "governance.aip.io/v1alpha1",
@@ -82,6 +112,27 @@ var _ = Describe("AgentRequest GC", Ordered, func() {
 		_, _ = utils.Run(cmd)
 		cmd = exec.Command("kubectl", "delete", "governedresource", "--all", "--ignore-not-found")
 		_, _ = utils.Run(cmd)
+
+		By("restoring controller-manager to GC-disabled state")
+		if os.Getenv("HELM_DEPLOYED") == "true" {
+			imageTag := os.Getenv("IMAGE_TAG")
+			_, _ = utils.Run(exec.Command("helm", "upgrade", "aip-k8s", "charts/aip-k8s/",
+				"-n", "aip-k8s-system",
+				"--reuse-values",
+				"--set", fmt.Sprintf("controller.image.tag=%s", imageTag),
+				"--set", fmt.Sprintf("gateway.image.tag=%s", imageTag),
+				"--set", fmt.Sprintf("dashboard.image.tag=%s", imageTag),
+				"--set", "gc.enabled=false",
+				"--wait", "--timeout", "3m"))
+		} else {
+			gcOffPatch := `{"spec":{"template":{"spec":{"containers":[{"name":"manager","args":["--leader-elect","--health-probe-bind-address=:8081","--gc-enabled=false","--ops-lock-duration=15s"]}]}}}}`
+			_, _ = utils.Run(exec.Command("kubectl", "patch", "deployment",
+				controllerDeploymentName, "-n", "aip-k8s-system",
+				"--type=merge", "-p", gcOffPatch))
+			_, _ = utils.Run(exec.Command("kubectl", "rollout", "status",
+				"deployment", controllerDeploymentName, "-n", "aip-k8s-system",
+				"--timeout=2m"))
+		}
 	})
 
 	It("should delete a terminal AgentRequest and its AuditRecords", func() {
