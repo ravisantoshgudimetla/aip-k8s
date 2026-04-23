@@ -224,9 +224,8 @@ async function fetchRequests() {
             return;
         }
         hideBanner();
-        const reqNs = document.getElementById('req-ns-input')?.value?.trim() || 'default';
         const reqGen = ++state.requestsGen;
-        fetchRequestSummaries(reqGen, reqNs);
+        fetchRequestSummaries(reqGen, ns);
 
         const data = await response.json();
         state.requests = data.sort((a, b) => new Date(b.metadata.creationTimestamp) - new Date(a.metadata.creationTimestamp));
