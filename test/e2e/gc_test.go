@@ -79,7 +79,7 @@ var _ = Describe("AgentRequest GC", Ordered, func() {
 			gcPatch := `{"spec":{"template":{"spec":{"containers":[{"name":"manager","args":["--leader-elect","--health-probe-bind-address=:8081","--gc-enabled=true","--gc-interval=1m","--gc-hard-ttl=1m","--gc-dry-run=false","--gc-safety-min-count=1","--ops-lock-duration=15s","--ops-lock-wait-timeout=20s"]}]}}}}`
 			_, err = utils.Run(exec.Command("kubectl", "patch", "deployment",
 				controllerDeploymentName, "-n", "aip-k8s-system",
-				"--type=strategic-merge-patch", "-p", gcPatch))
+				"--type=strategic", "-p", gcPatch))
 			Expect(err).NotTo(HaveOccurred(), "failed to enable GC on controller")
 			_, err = utils.Run(exec.Command("kubectl", "rollout", "status",
 				"deployment", controllerDeploymentName, "-n", "aip-k8s-system",
@@ -128,7 +128,7 @@ var _ = Describe("AgentRequest GC", Ordered, func() {
 			gcOffPatch := `{"spec":{"template":{"spec":{"containers":[{"name":"manager","args":["--leader-elect","--health-probe-bind-address=:8081","--gc-enabled=false","--ops-lock-duration=15s","--ops-lock-wait-timeout=20s"]}]}}}}`
 			_, _ = utils.Run(exec.Command("kubectl", "patch", "deployment",
 				controllerDeploymentName, "-n", "aip-k8s-system",
-				"--type=strategic-merge-patch", "-p", gcOffPatch))
+				"--type=strategic", "-p", gcOffPatch))
 			_, _ = utils.Run(exec.Command("kubectl", "rollout", "status",
 				"deployment", controllerDeploymentName, "-n", "aip-k8s-system",
 				"--timeout=2m"))
