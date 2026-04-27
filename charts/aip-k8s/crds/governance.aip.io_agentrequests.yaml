@@ -137,6 +137,10 @@ spec:
                   HumanApproval holds the human reviewer's decision when a policy requires manual approval.
                   The controller watches this field and drives the status state machine accordingly.
                 properties:
+                  approvedBy:
+                    description: ApprovedBy is the OIDC subject of the reviewer who
+                      made this decision.
+                    type: string
                   decision:
                     description: 'Decision is the reviewer''s choice: "approved" or
                       "denied".'

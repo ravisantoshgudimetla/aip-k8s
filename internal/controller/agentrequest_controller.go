@@ -55,6 +55,10 @@ const (
 	// ApprovedTimeout is the maximum time a request can stay in Approved phase before
 	// the controller times it out to PhaseFailed (agent never started execution).
 	ApprovedTimeout = 5 * time.Minute
+	// awaitingVerdictTTL is the maximum time an ungraded AwaitingVerdict request
+	// remains active before the controller expires it. Expired requests are excluded
+	// from accuracy counts (graduation ladder spec §4.2).
+	awaitingVerdictTTL = 168 * time.Hour // 7 days
 )
 
 // AgentRequestReconciler reconciles a AgentRequest object
@@ -142,7 +146,8 @@ func (r *AgentRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	if agentReq.Status.Phase == governancev1alpha1.PhaseCompleted ||
 		agentReq.Status.Phase == governancev1alpha1.PhaseFailed ||
-		agentReq.Status.Phase == governancev1alpha1.PhaseDenied {
+		agentReq.Status.Phase == governancev1alpha1.PhaseDenied ||
+		agentReq.Status.Phase == governancev1alpha1.PhaseExpired {
 		return ctrl.Result{}, nil
 	}
 
@@ -224,6 +229,8 @@ func (r *AgentRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return r.reconcileApproved(ctx, &agentReq)
 	case governancev1alpha1.PhaseExecuting:
 		return r.reconcileExecuting(ctx, &agentReq)
+	case governancev1alpha1.PhaseAwaitingVerdict:
+		return r.reconcileAwaitingVerdict(ctx, &agentReq)
 	}
 
 	return ctrl.Result{}, nil
@@ -558,7 +565,11 @@ func (r *AgentRequestReconciler) handleApprovalWait(ctx context.Context, agentRe
 			if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
 				return ctrl.Result{}, err
 			}
-			if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventRequestDenied, fromPhase, governancev1alpha1.PhaseDenied); err != nil {
+			denyAnnotations := map[string]string{}
+			if agentReq.Spec.HumanApproval.ApprovedBy != "" {
+				denyAnnotations["approvedBy"] = agentReq.Spec.HumanApproval.ApprovedBy
+			}
+			if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventRequestDenied, fromPhase, governancev1alpha1.PhaseDenied, denyAnnotations); err != nil {
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{}, nil
@@ -749,7 +760,11 @@ func (r *AgentRequestReconciler) handleLockAcquisition(ctx context.Context, agen
 		return ctrl.Result{}, err
 	}
 
-	if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventRequestApproved, fromPhase, governancev1alpha1.PhaseApproved); err != nil {
+	approvalAnnotations := map[string]string{}
+	if agentReq.Spec.HumanApproval != nil && agentReq.Spec.HumanApproval.ApprovedBy != "" {
+		approvalAnnotations["approvedBy"] = agentReq.Spec.HumanApproval.ApprovedBy
+	}
+	if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventRequestApproved, fromPhase, governancev1alpha1.PhaseApproved, approvalAnnotations); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -916,6 +931,53 @@ func (r *AgentRequestReconciler) reconcileExecuting(ctx context.Context, agentRe
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
+// reconcileAwaitingVerdict handles AwaitingVerdict phase requests.
+// When the gateway sets verdict fields (Verdict, VerdictBy, VerdictAt), the controller
+// drives the phase transition to Completed and emits a verdict.submitted AuditRecord.
+// Requests that remain ungraded beyond awaitingVerdictTTL are transitioned to Expired.
+func (r *AgentRequestReconciler) reconcileAwaitingVerdict(ctx context.Context, agentReq *governancev1alpha1.AgentRequest) (ctrl.Result, error) {
+	if agentReq.Status.Verdict != "" {
+		fromPhase := agentReq.Status.Phase
+		base := agentReq.DeepCopy()
+		agentReq.Status.Phase = governancev1alpha1.PhaseCompleted
+		agentRequestActive.Dec()
+		agentRequestTotal.WithLabelValues(governancev1alpha1.PhaseCompleted).Inc()
+		if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
+			return ctrl.Result{}, err
+		}
+		annotations := map[string]string{
+			"verdict":   agentReq.Status.Verdict,
+			"verdictBy": agentReq.Status.VerdictBy,
+		}
+		if agentReq.Status.VerdictReasonCode != "" {
+			annotations["verdictReasonCode"] = agentReq.Status.VerdictReasonCode
+		}
+		if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventVerdictSubmitted, fromPhase, governancev1alpha1.PhaseCompleted, annotations); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
+	now := r.now()
+	deadline := agentReq.CreationTimestamp.Add(awaitingVerdictTTL)
+	if now.After(deadline) {
+		fromPhase := agentReq.Status.Phase
+		base := agentReq.DeepCopy()
+		agentReq.Status.Phase = governancev1alpha1.PhaseExpired
+		agentRequestActive.Dec()
+		agentRequestTotal.WithLabelValues(governancev1alpha1.PhaseExpired).Inc()
+		if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventRequestExpired, fromPhase, governancev1alpha1.PhaseExpired); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
+	return ctrl.Result{RequeueAfter: deadline.Sub(now)}, nil
+}
+
 // releaseLock deletes the Kubernetes Lease backing the OpsLock for this request's target.
 // It is idempotent: a missing lease is not an error.
 func (r *AgentRequestReconciler) releaseLock(ctx context.Context, req *governancev1alpha1.AgentRequest) error {
@@ -940,8 +1002,10 @@ func (r *AgentRequestReconciler) releaseLock(ctx context.Context, req *governanc
 	return nil
 }
 
-// emitAuditRecord creates a new AuditRecord CR
-func (r *AgentRequestReconciler) emitAuditRecord(ctx context.Context, req *governancev1alpha1.AgentRequest, eventType string, fromPhase string, toPhase string) error {
+// emitAuditRecord creates a new AuditRecord CR. The optional extraAnnotations map
+// is merged into AuditRecord.Spec.Annotations and may carry event-specific context
+// (e.g. approvedBy, verdict, verdictReasonCode) without changing the call signature.
+func (r *AgentRequestReconciler) emitAuditRecord(ctx context.Context, req *governancev1alpha1.AgentRequest, eventType string, fromPhase string, toPhase string, extraAnnotations ...map[string]string) error {
 	auditLabels := map[string]string{
 		"aip.io/agentRequestRef": req.Name,
 	}
@@ -974,6 +1038,10 @@ func (r *AgentRequestReconciler) emitAuditRecord(ctx context.Context, req *gover
 			From: fromPhase,
 			To:   toPhase,
 		}
+	}
+
+	if len(extraAnnotations) > 0 && len(extraAnnotations[0]) > 0 {
+		audit.Spec.Annotations = extraAnnotations[0]
 	}
 
 	// Set OwnerReference for garbage collection

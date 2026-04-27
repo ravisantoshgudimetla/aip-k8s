@@ -110,6 +110,7 @@ var terminalPhases = map[string]bool{
 	v1alpha1.PhaseDenied:    true,
 	v1alpha1.PhaseCompleted: true,
 	v1alpha1.PhaseFailed:    true,
+	v1alpha1.PhaseExpired:   true,
 }
 
 type Server struct {
@@ -861,7 +862,8 @@ func (s *Server) handleVerdictAgentRequest(w http.ResponseWriter, r *http.Reques
 		agentReq.Status.VerdictNote = body.Note
 		agentReq.Status.VerdictBy = sub
 		agentReq.Status.VerdictAt = &now
-		agentReq.Status.Phase = v1alpha1.PhaseCompleted
+		// Phase transition to Completed is driven by the controller after it
+		// detects Verdict != "" and emits the verdict.submitted AuditRecord.
 
 		return s.client.Status().Patch(r.Context(), &agentReq, client.MergeFrom(base))
 	}); err != nil {
@@ -1580,6 +1582,7 @@ func (s *Server) handleHumanDecision(w http.ResponseWriter, r *http.Request, dec
 		Decision:      decision,
 		Reason:        humanReason,
 		ForGeneration: agentReq.Status.EvaluationGeneration,
+		ApprovedBy:    sub,
 	}
 
 	if err := s.client.Patch(r.Context(), &agentReq, patch); err != nil {

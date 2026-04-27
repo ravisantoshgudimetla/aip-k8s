@@ -30,7 +30,7 @@ type AuditRecordSpec struct {
 	AgentRequestRef string `json:"agentRequestRef"` // Name of the AgentRequest CR
 
 	// Event classification
-	// +kubebuilder:validation:Enum="request.submitted";"request.approved";"request.denied";"request.executing";"request.completed";"request.failed";"request.revoked";"lock.acquired";"lock.released";"lock.expired";"policy.evaluated";"cascade.mismatch";"heartbeat.timeout";"state.drifted";"state.drifted.verify"
+	// +kubebuilder:validation:Enum="request.submitted";"request.approved";"request.denied";"request.executing";"request.completed";"request.failed";"request.revoked";"request.expired";"verdict.submitted";"lock.acquired";"lock.released";"lock.expired";"policy.evaluated";"cascade.mismatch";"heartbeat.timeout";"state.drifted";"state.drifted.verify"
 	Event string `json:"event"`
 
 	// AgentRequest snapshot at the time of the event
@@ -65,6 +65,8 @@ const (
 	AuditEventRequestCompleted   = "request.completed"
 	AuditEventRequestFailed      = "request.failed"
 	AuditEventRequestRevoked     = "request.revoked"
+	AuditEventRequestExpired     = "request.expired"
+	AuditEventVerdictSubmitted   = "verdict.submitted"
 	AuditEventLockAcquired       = "lock.acquired"
 	AuditEventLockReleased       = "lock.released"
 	AuditEventLockExpired        = "lock.expired"
