@@ -69,13 +69,13 @@ var _ = Describe("AgentRequest AwaitingVerdict reconciliation", func() {
 	cleanupAR := func(name string) {
 		ar := &governancev1alpha1.AgentRequest{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "default"}, ar); err == nil {
-			_ = k8sClient.Delete(ctx, ar)
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, ar))).To(Succeed())
 		}
 		var auditList governancev1alpha1.AuditRecordList
 		if k8sClient.List(ctx, &auditList, client.InNamespace("default")) == nil {
-			for _, a := range auditList.Items {
-				if a.Spec.AgentRequestRef == name {
-					_ = k8sClient.Delete(ctx, &a)
+			for i := range auditList.Items {
+				if auditList.Items[i].Spec.AgentRequestRef == name {
+					Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &auditList.Items[i]))).To(Succeed())
 				}
 			}
 		}
