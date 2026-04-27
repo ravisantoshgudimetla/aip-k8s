@@ -107,7 +107,7 @@ var _ = Describe("AgentRequest AwaitingVerdict reconciliation", func() {
 		Expect(k8sClient.Get(ctx, nn, &current)).To(Succeed())
 		base = current.DeepCopy()
 		now := metav1.Now()
-		current.Status.Verdict = "correct"
+		current.Status.Verdict = verdictCorrect
 		current.Status.VerdictBy = "reviewer@example.com"
 		current.Status.VerdictAt = &now
 		Expect(k8sClient.Status().Patch(ctx, &current, client.MergeFrom(base))).To(Succeed())
