@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"maps"
 	"time"
 
 	"crypto/sha256"
@@ -959,6 +960,10 @@ func (r *AgentRequestReconciler) reconcileAwaitingVerdict(ctx context.Context, a
 	}
 
 	now := r.now()
+	// TTL is measured from creation, not from when the request entered AwaitingVerdict.
+	// For SoakMode requests this is equivalent (phase is set on the first reconcile),
+	// but if execution takes non-trivial time the reviewer window silently shrinks.
+	// A future improvement would record an AwaitingVerdictSince timestamp in status.
 	deadline := agentReq.CreationTimestamp.Add(awaitingVerdictTTL)
 	if now.After(deadline) {
 		fromPhase := agentReq.Status.Phase
@@ -1041,7 +1046,10 @@ func (r *AgentRequestReconciler) emitAuditRecord(ctx context.Context, req *gover
 	}
 
 	if len(extraAnnotations) > 0 && len(extraAnnotations[0]) > 0 {
-		audit.Spec.Annotations = extraAnnotations[0]
+		if audit.Spec.Annotations == nil {
+			audit.Spec.Annotations = make(map[string]string, len(extraAnnotations[0]))
+		}
+		maps.Copy(audit.Spec.Annotations, extraAnnotations[0])
 	}
 
 	// Set OwnerReference for garbage collection
