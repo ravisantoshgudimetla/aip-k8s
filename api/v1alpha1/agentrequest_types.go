@@ -87,6 +87,9 @@ type HumanApproval struct {
 	Reason string `json:"reason,omitempty"`
 	// ForGeneration binds this approval to a specific EvaluationGeneration epoch.
 	ForGeneration int64 `json:"forGeneration"`
+	// ApprovedBy is the OIDC subject of the reviewer who made this decision.
+	// +optional
+	ApprovedBy string `json:"approvedBy,omitempty"`
 }
 
 type Target struct {

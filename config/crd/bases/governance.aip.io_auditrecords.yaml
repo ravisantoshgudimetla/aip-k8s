@@ -85,6 +85,8 @@ spec:
                 - request.completed
                 - request.failed
                 - request.revoked
+                - request.expired
+                - verdict.submitted
                 - lock.acquired
                 - lock.released
                 - lock.expired
