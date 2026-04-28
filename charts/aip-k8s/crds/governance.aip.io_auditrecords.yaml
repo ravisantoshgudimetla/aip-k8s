@@ -79,6 +79,7 @@ spec:
                 description: Event classification
                 enum:
                 - request.submitted
+                - request.observed
                 - request.approved
                 - request.denied
                 - request.executing
