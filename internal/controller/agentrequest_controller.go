@@ -179,6 +179,8 @@ func (r *AgentRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		// observe-mode requests are recorded as observations only; they skip
 		// SafetyPolicy eval, OpsLock, and human approval and are immediately terminal.
 		if agentReq.Spec.Mode == governancev1alpha1.ModeObserve {
+			log.FromContext(ctx).Info("Initializing AgentRequest phase", "name", agentReq.Name, "phase", governancev1alpha1.PhaseObserved, "mode", governancev1alpha1.ModeObserve)
+			agentRequestTotal.WithLabelValues(governancev1alpha1.PhaseObserved).Inc()
 			base := agentReq.DeepCopy()
 			agentReq.Status.Phase = governancev1alpha1.PhaseObserved
 			meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{
