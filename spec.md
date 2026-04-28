@@ -1044,12 +1044,15 @@ To ensure interoperability between independently developed agents and control pl
       "type": "string",
       "enum": [
         "request.submitted",
+        "request.observed",
         "request.approved",
         "request.denied",
         "request.executing",
         "request.completed",
         "request.failed",
         "request.revoked",
+        "request.expired",
+        "verdict.submitted",
         "lock.acquired",
         "lock.released",
         "lock.expired",
@@ -1330,7 +1333,7 @@ This pattern allows framework authors to adopt AIP governance without rewriting 
 
 #### Kubernetes resources
 
-```
+```text
 k8s://{cluster}/{namespace}/{kind}/{name}
 ```
 
@@ -1342,7 +1345,7 @@ k8s://{cluster}/{namespace}/{kind}/{name}
 | `{name}` | Resource name. |
 
 *Examples:*
-```
+```text
 k8s://prod/default/deployment/payment-api
 k8s://staging/kube-system/daemonset/fluentd
 k8s://prod/_/clusterrole/edit
@@ -1350,7 +1353,7 @@ k8s://prod/_/clusterrole/edit
 
 #### GitHub resources
 
-```
+```text
 github://{org}/{repo}/files/{branch}/{path}
 ```
 
@@ -1362,7 +1365,7 @@ github://{org}/{repo}/files/{branch}/{path}
 | `{path}` | File path within the repository (may contain `/`). |
 
 *Examples:*
-```
+```text
 github://myorg/infra/files/main/nodepools/us-east-1.yaml
 github://myorg/infra/files/feature%2Ffoo/deploy/app.yaml
 ```
@@ -1377,7 +1380,7 @@ github://myorg/infra/files/feature%2Ffoo/deploy/app.yaml
 | `**` | Any characters **including** `/` (crosses segment boundaries) |
 
 *Examples:*
-```
+```text
 k8s://prod/default/**          # all resources in prod/default
 k8s://prod/*/deployment/*      # all deployments in any namespace in prod
 github://myorg/infra/files/**  # all files in any branch of myorg/infra
