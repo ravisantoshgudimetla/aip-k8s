@@ -1324,21 +1324,73 @@ The Model Context Protocol (MCP) standardizes how agents interact with tools, wh
 
 This pattern allows framework authors to adopt AIP governance without rewriting agent reasoning loops.
 
-### A.2 Target URI Conventions (Non-Normative)
+### A.2 Target URI Conventions
 
-While Section 3.1 dictates that `Target.URI` formats are implementation-defined, implementations SHOULD adopt recognizable, hierarchical schemes to improve cross-platform interoperability.
+`Target.URI` is a string opaque to the protocol; the AIP control plane never parses it for routing decisions. Agents MUST use the canonical schemes defined here for K8s and GitHub targets. Other platforms SHOULD adopt recognizable, hierarchical schemes to improve cross-platform interoperability.
 
-Examples of reasonable URI schemes include:
-- **Kubernetes**: `k8s://<cluster-name>/<namespace>/<kind>/<name>`
-  - *Example*: `k8s://prod-us-east/default/deployment/payment-api`
-- **AWS**: `aws://<accountId>/<region>/<service>/<resourceType>/<resourceId>`
+#### Kubernetes resources
+
+```
+k8s://{cluster}/{namespace}/{kind}/{name}
+```
+
+| Segment | Description |
+|---------|-------------|
+| `{cluster}` | Logical cluster or environment name (e.g. `prod`, `staging`). Never a hostname. |
+| `{namespace}` | Kubernetes namespace (e.g. `default`). Use `_` for cluster-scoped resources. |
+| `{kind}` | Lowercased singular resource type (e.g. `deployment`, `nodepool`). |
+| `{name}` | Resource name. |
+
+*Examples:*
+```
+k8s://prod/default/deployment/payment-api
+k8s://staging/kube-system/daemonset/fluentd
+k8s://prod/_/clusterrole/edit
+```
+
+#### GitHub resources
+
+```
+github://{org}/{repo}/files/{branch}/{path}
+```
+
+| Segment | Description |
+|---------|-------------|
+| `{org}` | GitHub organisation or user. |
+| `{repo}` | Repository name. |
+| `{branch}` | Branch name. Percent-encode `/` as `%2F` for slash branches. |
+| `{path}` | File path within the repository (may contain `/`). |
+
+*Examples:*
+```
+github://myorg/infra/files/main/nodepools/us-east-1.yaml
+github://myorg/infra/files/feature%2Ffoo/deploy/app.yaml
+```
+
+#### GovernedResource URI pattern matching
+
+`GovernedResource.spec.uriPattern` uses [gobwas/glob](https://github.com/gobwas/glob) semantics with `/` as the path separator:
+
+| Wildcard | Matches |
+|----------|---------|
+| `*` | Any characters **except** `/` |
+| `**` | Any characters **including** `/` (crosses segment boundaries) |
+
+*Examples:*
+```
+k8s://prod/default/**          # all resources in prod/default
+k8s://prod/*/deployment/*      # all deployments in any namespace in prod
+github://myorg/infra/files/**  # all files in any branch of myorg/infra
+```
+
+Agents MUST use `**` (not `*`) when a pattern segment needs to span multiple `/`-separated path components.
+
+#### Other platforms
+
+- **AWS**: `aws://{accountId}/{region}/{service}/{resourceType}/{resourceId}`
   - *Example*: `aws://123456789012/us-west-2/ec2/instance/i-0abcd1234efgh5678`
 - **Azure**: Valid Azure Resource Manager (ARM) IDs.
-  - *Example*: `/subscriptions/<subId>/resourceGroups/<rgName>/providers/Microsoft.Compute/virtualMachines/<vmName>`
-- **GitHub**: `github://{org}/{repo}/files/{branch}/{path}`
-  - `{branch}` must be percent-encoded if it contains `/` (e.g., `feature/foo` → `feature%2Ffoo`). Parsers split on the first unencoded `/` after `files/` to separate branch from path, then decode `%2F` in the branch segment.
-  - *Example (simple branch)*: `github://myorg/infra/files/main/nodepools/us-east-1.yaml`
-  - *Example (slash branch)*: `github://myorg/infra/files/feature%2Ffoo/nodepools/us-east-1.yaml`
+  - *Example*: `/subscriptions/{subId}/resourceGroups/{rgName}/providers/Microsoft.Compute/virtualMachines/{vmName}`
 
 ### A.3 Reference Bindings
 This specification is accompanied by platform-specific reference bindings that demonstrate how AIP abstractions map to concrete infrastructure platforms. These bindings are informational and not normative:
