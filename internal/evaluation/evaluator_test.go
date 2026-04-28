@@ -168,6 +168,55 @@ func TestEvaluator(t *testing.T) {
 			expectedAct: "Allow",
 		},
 		{
+			name: "github:// URI — request.*-only policy evaluates correctly with nil target context",
+			req: &aipv1alpha1.AgentRequest{
+				Spec: aipv1alpha1.AgentRequestSpec{
+					Target: aipv1alpha1.Target{URI: "github://myorg/infra/files/main/deploy/app.yaml"},
+					Reason: "update node pool config",
+				},
+			},
+			policies: []aipv1alpha1.SafetyPolicy{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "require-reason-github"},
+					Spec: aipv1alpha1.SafetyPolicySpec{
+						Rules: []aipv1alpha1.Rule{
+							{
+								Name:       "deny-empty-reason",
+								Action:     "Deny",
+								Expression: `request.spec.reason == ""`,
+							},
+						},
+					},
+				},
+			},
+			expectedAct: "Allow",
+		},
+		{
+			name: "github:// URI — target.* fields are zero-valued (not error) when no fetcher applies",
+			req: &aipv1alpha1.AgentRequest{
+				Spec: aipv1alpha1.AgentRequestSpec{
+					Target: aipv1alpha1.Target{URI: "github://myorg/infra/files/main/deploy/app.yaml"},
+				},
+			},
+			policies: []aipv1alpha1.SafetyPolicy{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "check-target-exists"},
+					Spec: aipv1alpha1.SafetyPolicySpec{
+						Rules: []aipv1alpha1.Rule{
+							{
+								// target.exists is false (zero value) for non-k8s URIs;
+								// this expression evaluates to false so the Deny does not fire.
+								Name:       "deny-if-exists",
+								Action:     "Deny",
+								Expression: `target.exists == true`,
+							},
+						},
+					},
+				},
+			},
+			expectedAct: "Allow",
+		},
+		{
 			name: "Cascade Model checking (deny)",
 			req: &aipv1alpha1.AgentRequest{
 				Spec: aipv1alpha1.AgentRequestSpec{

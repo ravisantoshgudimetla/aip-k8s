@@ -166,6 +166,16 @@ spec:
                 type: string
               interruptibility:
                 type: boolean
+              mode:
+                default: govern
+                description: |-
+                  Mode controls whether this request enters the full governance lifecycle or is
+                  recorded as an observation only. "observe" is terminal immediately (Phase=Observed);
+                  "govern" (default) runs SafetyPolicy eval, OpsLock, and human approval.
+                enum:
+                - observe
+                - govern
+                type: string
               parameters:
                 x-kubernetes-preserve-unknown-fields: true
               priority:

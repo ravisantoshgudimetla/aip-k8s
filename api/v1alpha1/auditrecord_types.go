@@ -30,7 +30,7 @@ type AuditRecordSpec struct {
 	AgentRequestRef string `json:"agentRequestRef"` // Name of the AgentRequest CR
 
 	// Event classification
-	// +kubebuilder:validation:Enum="request.submitted";"request.approved";"request.denied";"request.executing";"request.completed";"request.failed";"request.revoked";"request.expired";"verdict.submitted";"lock.acquired";"lock.released";"lock.expired";"policy.evaluated";"cascade.mismatch";"heartbeat.timeout";"state.drifted";"state.drifted.verify"
+	// +kubebuilder:validation:Enum="request.submitted";"request.observed";"request.approved";"request.denied";"request.executing";"request.completed";"request.failed";"request.revoked";"request.expired";"verdict.submitted";"lock.acquired";"lock.released";"lock.expired";"policy.evaluated";"cascade.mismatch";"heartbeat.timeout";"state.drifted";"state.drifted.verify"
 	Event string `json:"event"`
 
 	// AgentRequest snapshot at the time of the event
@@ -59,6 +59,7 @@ type AuditRecordSpec struct {
 // Audit event types (from AIP spec Section 9.3)
 const (
 	AuditEventRequestSubmitted   = "request.submitted"
+	AuditEventRequestObserved    = "request.observed"
 	AuditEventRequestApproved    = "request.approved"
 	AuditEventRequestDenied      = "request.denied"
 	AuditEventRequestExecuting   = "request.executing"

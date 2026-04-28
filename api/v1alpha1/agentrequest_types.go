@@ -31,6 +31,14 @@ type AgentRequestSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	Reason string `json:"reason"`
 
+	// Mode controls whether this request enters the full governance lifecycle or is
+	// recorded as an observation only. "observe" is terminal immediately (Phase=Observed);
+	// "govern" (default) runs SafetyPolicy eval, OpsLock, and human approval.
+	// +kubebuilder:validation:Enum=observe;govern
+	// +kubebuilder:default=govern
+	// +optional
+	Mode string `json:"mode,omitempty"`
+
 	// Classification is the optional problem category declared by the agent.
 	// Format: "category/subcategory" (e.g. "nodepool/at-capacity").
 	// Schema forward-port: stored but not yet consumed by the controller or accuracy
@@ -153,6 +161,12 @@ const (
 	PhaseFailed          = "Failed"
 	PhaseAwaitingVerdict = "AwaitingVerdict"
 	PhaseExpired         = "Expired"
+	PhaseObserved        = "Observed"
+)
+
+const (
+	ModeObserve = "observe"
+	ModeGovern  = "govern"
 )
 
 // Condition types

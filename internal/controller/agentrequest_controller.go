@@ -148,7 +148,8 @@ func (r *AgentRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if agentReq.Status.Phase == governancev1alpha1.PhaseCompleted ||
 		agentReq.Status.Phase == governancev1alpha1.PhaseFailed ||
 		agentReq.Status.Phase == governancev1alpha1.PhaseDenied ||
-		agentReq.Status.Phase == governancev1alpha1.PhaseExpired {
+		agentReq.Status.Phase == governancev1alpha1.PhaseExpired ||
+		agentReq.Status.Phase == governancev1alpha1.PhaseObserved {
 		return ctrl.Result{}, nil
 	}
 
@@ -175,6 +176,28 @@ func (r *AgentRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// 3. Initialize Phase if empty
 	if agentReq.Status.Phase == "" && !meta.IsStatusConditionTrue(agentReq.Status.Conditions, "RequestSubmitted") {
+		// observe-mode requests are recorded as observations only; they skip
+		// SafetyPolicy eval, OpsLock, and human approval and are immediately terminal.
+		if agentReq.Spec.Mode == governancev1alpha1.ModeObserve {
+			log.FromContext(ctx).Info("Initializing AgentRequest phase", "name", agentReq.Name, "phase", governancev1alpha1.PhaseObserved, "mode", governancev1alpha1.ModeObserve)
+			agentRequestTotal.WithLabelValues(governancev1alpha1.PhaseObserved).Inc()
+			base := agentReq.DeepCopy()
+			agentReq.Status.Phase = governancev1alpha1.PhaseObserved
+			meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{
+				Type:    "RequestSubmitted",
+				Status:  metav1.ConditionTrue,
+				Reason:  "ObserveMode",
+				Message: "Request recorded as observation; governance lifecycle skipped",
+			})
+			if err := r.Status().Patch(ctx, &agentReq, client.MergeFrom(base)); err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := r.emitAuditRecord(ctx, &agentReq, governancev1alpha1.AuditEventRequestObserved, "", governancev1alpha1.PhaseObserved); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
+		}
+
 		phase := governancev1alpha1.PhasePending
 		reason := "Initialization"
 		message := "Initial phase set to Pending"
