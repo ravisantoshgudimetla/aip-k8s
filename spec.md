@@ -1118,6 +1118,15 @@ To ensure interoperability between independently developed agents and control pl
 }
 ```
 
+The following table documents the trigger and semantics for baseline `AuditRecord.event` values that require disambiguation. Events not listed here have self-evident semantics from their corresponding phase transitions.
+
+| Event | Trigger | Notes |
+|-------|---------|-------|
+| `request.submitted` | Emitted when a new `AgentRequest` is first reconciled and its phase is initialized to `Pending` or `AwaitingVerdict`. | Marks the entry point of the governance lifecycle. |
+| `request.observed` | Emitted when an `AgentRequest` with `spec.mode: observe` is reconciled. The request transitions directly to the terminal `Observed` phase, bypassing SafetyPolicy evaluation, OpsLock acquisition, and human approval. | Use this mode to record an agent action that has already occurred without a governance gate. |
+| `request.expired` | Emitted when the control plane expires a request that has exceeded its configured TTL (e.g., a `Pending` or `AwaitingVerdict` request that was never acted upon). | Distinct from `request.failed` — expiry is time-driven, not agent-driven. |
+| `verdict.submitted` | Emitted when a reviewer submits a verdict (approve or deny) on a request in `AwaitingVerdict` or `Pending` state. | Provides an audit trail of human-in-the-loop decisions separate from the resulting phase transition event (e.g., `request.approved` or `request.denied`). |
+
 ### 9.4 OpsLock
 
 ```json
@@ -1371,6 +1380,8 @@ github://myorg/infra/files/feature%2Ffoo/deploy/app.yaml
 ```
 
 #### GovernedResource URI pattern matching
+
+> **Kubernetes-binding only.** `GovernedResource` is a Kubernetes CRD defined by this implementation. The `uriPattern` field and glob semantics below apply only to the Kubernetes binding; other implementations MAY use a different scope-matching mechanism.
 
 `GovernedResource.spec.uriPattern` uses [gobwas/glob](https://github.com/gobwas/glob) semantics with `/` as the path separator:
 
