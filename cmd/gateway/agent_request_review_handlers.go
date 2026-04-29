@@ -83,7 +83,8 @@ func (s *Server) handleVerdictAgentRequest(w http.ResponseWriter, r *http.Reques
 		// Phase transition to Completed is driven by the controller after it
 		// detects Verdict != "" and emits the verdict.submitted AuditRecord.
 
-		return s.client.Status().Patch(r.Context(), &agentReq, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+		return s.client.Status().Patch(r.Context(), &agentReq, client.MergeFromWithOptions(base,
+			client.MergeFromWithOptimisticLock{}))
 	}); err != nil {
 		log.Printf("ERROR: handleVerdictAgentRequest failed for %s: %v", name, err)
 		if apierrors.IsNotFound(err) {
