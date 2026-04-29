@@ -59,6 +59,7 @@ var terminalPhases = map[string]bool{
 
 type Server struct {
 	client                  client.Client
+	watchClient             client.WithWatch
 	dedupWindow             time.Duration
 	waitTimeout             time.Duration
 	roles                   *roleConfig
@@ -163,6 +164,10 @@ type responseWriter struct {
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.status = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+func (rw *responseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
 }
 
 var invalidDNSChars = regexp.MustCompile(`[^a-z0-9-]`)

@@ -58,6 +58,9 @@ func TestGatewayIntegration(t *testing.T) {
 	directClient, err := client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
+	watchClient, err := client.NewWithWatch(cfg, client.Options{Scheme: scheme.Scheme})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
 	mgrClient := startTestManager(t, cfg)
 	ctx := context.Background()
 
@@ -72,6 +75,7 @@ func TestGatewayIntegration(t *testing.T) {
 	runSoakModeAndVerdictTests(t, mgrClient, directClient, ctx)
 	runTrustGateTests(t, mgrClient, directClient, ctx)
 	runTrustProfileReadTests(t, mgrClient, directClient, ctx)
+	runSSEStreamingTests(t, mgrClient, directClient, watchClient, ctx)
 }
 
 func startTestManager(t *testing.T, cfg *rest.Config) client.Client {

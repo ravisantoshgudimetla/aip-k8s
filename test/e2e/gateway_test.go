@@ -20,6 +20,7 @@ limitations under the License.
 package e2e
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -333,6 +334,137 @@ var _ = Describe("Phase 6: Gateway API", Ordered, func() {
 		})
 	})
 
+	Context("SSE streaming", Ordered, func() {
+		var sseCreatedName string
+
+		BeforeAll(func() {
+			By("cleaning up stale resources from previous contexts")
+			gwCleanup(gwNS)
+
+			By("creating an AgentRequest for SSE tests")
+			resp, err := gwPost("/agent-requests", `{
+				"agentIdentity": "gw-sse-agent",
+				"action":        "gw-sse-action",
+				"targetURI":     "k8s://dev/default/deployment/sse-app",
+				"reason":        "sse e2e test"
+			}`)
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close() //nolint:errcheck
+			Expect(resp.StatusCode).To(Equal(http.StatusCreated))
+			var body map[string]interface{}
+			Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+			sseCreatedName, _ = body["name"].(string)
+			Expect(sseCreatedName).NotTo(BeEmpty())
+
+			By("waiting for request to reach Approved")
+			Eventually(func() string {
+				return getAgentRequestPhase(sseCreatedName, gwNS)
+			}, 2*time.Minute, 2*time.Second).Should(Equal("Approved"))
+		})
+
+		AfterAll(func() {
+			gwCleanup(gwNS)
+		})
+
+		It("GET /agent-requests/{name}/watch returns SSE result for approved request", func() {
+			resp, err := gwGetSSE("/agent-requests/" + sseCreatedName + "/watch")
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close() //nolint:errcheck
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			Expect(resp.Header.Get("Content-Type")).To(Equal("text/event-stream"))
+
+			bodyBytes, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			events := parseE2ESSEEvents(string(bodyBytes))
+			Expect(events).ToNot(BeEmpty())
+
+			last := events[len(events)-1]
+			Expect(last.eventType).To(Equal("result"))
+			Expect(last.data).To(ContainSubstring(`"phase":"Approved"`))
+		})
+
+		It("GET /agent-requests/{name}/watch returns 400 without Accept header", func() {
+			resp, err := http.Get(gwBaseURL + "/agent-requests/" + sseCreatedName + "/watch") //nolint:noctx
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close() //nolint:errcheck
+			Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+		})
+
+		It("GET /agent-requests/{name}/watch returns 404 for nonexistent request", func() {
+			resp, err := gwGetSSE("/agent-requests/does-not-exist-sse/watch")
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close() //nolint:errcheck
+			Expect(resp.StatusCode).To(Equal(http.StatusNotFound))
+		})
+
+		It("SSE stream receives result event during human approval flow", func() {
+			const ssePolicyName = "gw-sse-require-human"
+			By("creating SafetyPolicy that requires human approval")
+			policyJSON := fmt.Sprintf(`{
+				"apiVersion": "governance.aip.io/v1alpha1",
+				"kind": "SafetyPolicy",
+				"metadata": {"name": %q, "namespace": %q},
+				"spec": {
+					"governedResourceSelector": {},
+					"rules": [{"name": "sse-require-human", "type": "StateEvaluation", "action": "RequireApproval", "expression": "true"}],
+					"failureMode": "FailClosed"
+				}
+			}`, ssePolicyName, gwNS)
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(policyJSON)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating a request via POST with SSE Accept header")
+			type sseResult struct {
+				resp *http.Response
+				err  error
+			}
+			resultCh := make(chan sseResult, 1)
+			go func() {
+				req, reqErr := http.NewRequest("POST", gwBaseURL+"/agent-requests", //nolint:noctx
+					strings.NewReader(`{
+						"agentIdentity": "gw-sse-agent",
+						"action":        "gw-sse-human-action",
+						"targetURI":     "k8s://dev/default/deployment/sse-human-app",
+						"reason":        "sse human decision e2e"
+					}`))
+				if reqErr != nil {
+					resultCh <- sseResult{err: reqErr}
+					return
+				}
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Accept", "text/event-stream")
+				r, e := http.DefaultClient.Do(req)
+				resultCh <- sseResult{resp: r, err: e}
+			}()
+
+			By("reading SSE response (streams until actionable state)")
+			var result sseResult
+			Eventually(func() bool {
+				select {
+				case result = <-resultCh:
+					return true
+				default:
+					return false
+				}
+			}, 2*time.Minute, time.Second).Should(BeTrue())
+			Expect(result.err).NotTo(HaveOccurred())
+			defer result.resp.Body.Close() //nolint:errcheck
+
+			Expect(result.resp.Header.Get("Content-Type")).To(Equal("text/event-stream"))
+			bodyBytes, err := io.ReadAll(result.resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			events := parseE2ESSEEvents(string(bodyBytes))
+			Expect(events).ToNot(BeEmpty())
+
+			last := events[len(events)-1]
+			Expect(last.eventType).To(Equal("result"))
+			Expect(last.data).To(ContainSubstring(`"phase":"Pending"`))
+			Expect(last.data).To(ContainSubstring(`RequiresApproval`))
+		})
+	})
+
 	Context("AgentDiagnostic deprecation", func() {
 		It("POST /agent-diagnostics returns 410 Gone with deprecation message", func() {
 			resp, err := gwPost("/agent-diagnostics", `{
@@ -384,4 +516,35 @@ func gwReadBody(resp *http.Response) string {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
+}
+
+// gwGetSSE sends a GET request with Accept: text/event-stream.
+func gwGetSSE(path string) (*http.Response, error) {
+	req, err := http.NewRequest("GET", gwBaseURL+path, nil) //nolint:noctx
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	return http.DefaultClient.Do(req)
+}
+
+type e2eSSEEvent struct {
+	eventType string
+	data      string
+}
+
+func parseE2ESSEEvents(body string) []e2eSSEEvent {
+	var events []e2eSSEEvent
+	scanner := bufio.NewScanner(strings.NewReader(body))
+	var currentType string
+	for scanner.Scan() {
+		line := scanner.Text()
+		if after, ok := strings.CutPrefix(line, "event: "); ok {
+			currentType = after
+		} else if after, ok := strings.CutPrefix(line, "data: "); ok {
+			events = append(events, e2eSSEEvent{eventType: currentType, data: after})
+			currentType = ""
+		}
+	}
+	return events
 }

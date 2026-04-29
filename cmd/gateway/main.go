@@ -79,7 +79,7 @@ func main() {
 	}
 
 	// Create Controller-Runtime Client
-	k8sClient, err := client.New(cfg, client.Options{Scheme: scheme})
+	k8sClient, err := client.NewWithWatch(cfg, client.Options{Scheme: scheme})
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
@@ -104,6 +104,7 @@ func main() {
 	}
 	server := &Server{
 		client:                  k8sClient,
+		watchClient:             k8sClient,
 		dedupWindow:             *dedupWindow,
 		waitTimeout:             wt,
 		roles:                   rc,
@@ -129,6 +130,7 @@ func main() {
 	mux.HandleFunc("GET /agent-requests", server.handleListAgentRequests)
 	mux.HandleFunc("POST /agent-requests", server.handleCreateAgentRequest)
 	mux.HandleFunc("GET /agent-requests/{name}", server.handleGetAgentRequest)
+	mux.HandleFunc("GET /agent-requests/{name}/watch", server.handleWatchAgentRequest)
 	mux.HandleFunc("POST /agent-requests/{name}/executing", server.handleExecutingAgentRequest)
 	mux.HandleFunc("POST /agent-requests/{name}/completed", server.handleCompletedAgentRequest)
 	mux.HandleFunc("POST /agent-requests/{name}/approve", server.handleApproveAgentRequest)

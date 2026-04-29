@@ -205,17 +205,27 @@ admissionPassed:
 		return
 	}
 	if existing != nil {
-		// Idempotent: return the current state of the existing request immediately.
-		// Do not poll — the caller already has an in-flight request and should
-		// act on its current phase rather than wait for a terminal transition.
-		writeJSON(w, http.StatusOK, map[string]any{
+		payload := map[string]any{
 			"name":                     existing.Name,
 			"labels":                   reqLabels,
 			"phase":                    existing.Status.Phase,
 			"denial":                   existing.Status.Denial,
 			"conditions":               existing.Status.Conditions,
 			"controlPlaneVerification": existing.Status.ControlPlaneVerification,
-		})
+		}
+		if acceptsSSE(r) {
+			rc := http.NewResponseController(w)
+			writeSSEHeaders(w)
+			if err := rc.Flush(); err != nil {
+				log.Printf("SSE: failed to flush for duplicate %s: %v", existing.Name, err)
+				return
+			}
+			if err := writeSSEEvent(w, rc, sseEventResult, payload); err != nil {
+				log.Printf("SSE: failed to write duplicate result for %s: %v", existing.Name, err)
+			}
+			return
+		}
+		writeJSON(w, http.StatusOK, payload)
 		return
 	}
 
@@ -232,7 +242,11 @@ admissionPassed:
 		return
 	}
 
-	s.pollAgentRequestPhase(w, r, agentReq.Name, ns, reqLabels)
+	if acceptsSSE(r) {
+		s.streamAgentRequestPhase(w, r, agentReq.Name, ns, reqLabels)
+	} else {
+		s.pollAgentRequestPhase(w, r, agentReq.Name, ns, reqLabels)
+	}
 }
 
 func (s *Server) pollAgentRequestPhase(
