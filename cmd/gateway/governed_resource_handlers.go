@@ -44,6 +44,14 @@ func (s *Server) handleCreateGovernedResource(w http.ResponseWriter, r *http.Req
 	}
 
 	if err := s.client.Create(r.Context(), &gr); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		if apierrors.IsInvalid(err) || apierrors.IsBadRequest(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -114,20 +122,20 @@ func (s *Server) handleReplaceGovernedResource(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	var updated v1alpha1.GovernedResource
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		var existing v1alpha1.GovernedResource
-		if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &existing); err != nil {
+		if err := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &updated); err != nil {
 			return err
 		}
 
-		if err := checkContextSchemaAppendOnly(existing.Spec.ContextSchema, newGR.Spec.ContextSchema); err != nil {
+		if err := checkContextSchemaAppendOnly(updated.Spec.ContextSchema, newGR.Spec.ContextSchema); err != nil {
 			return fmt.Errorf("INVALID_EVOLUTION: %w", err)
 		}
 
-		existing.Spec = newGR.Spec
-		existing.Labels = newGR.Labels
-		existing.Annotations = newGR.Annotations
-		return s.client.Update(r.Context(), &existing)
+		updated.Spec = newGR.Spec
+		updated.Labels = newGR.Labels
+		updated.Annotations = newGR.Annotations
+		return s.client.Update(r.Context(), &updated)
 	})
 
 	if err != nil {
@@ -143,8 +151,6 @@ func (s *Server) handleReplaceGovernedResource(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	var updated v1alpha1.GovernedResource
-	_ = s.client.Get(r.Context(), types.NamespacedName{Name: name}, &updated)
 	writeJSON(w, http.StatusOK, updated)
 }
 

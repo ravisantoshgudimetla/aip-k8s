@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -16,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/agent-control-plane/aip-k8s/api/v1alpha1"
@@ -133,8 +133,8 @@ func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request
 		// If the CRD is not yet installed, treat as an empty list.
 		// This allows the system to boot gracefully even if the GovernedResource CRD
 		// is not yet available (e.g., during cluster initialization in e2e tests).
-		if strings.Contains(err.Error(), "no matches for kind") {
-			// Treat as empty list
+		if meta.IsNoMatchError(err) {
+			// CRD not yet installed — treat as empty list
 		} else {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list GovernedResources: %v", err))
 			return
@@ -200,7 +200,11 @@ admissionPassed:
 	}
 
 	if err := s.client.Create(r.Context(), agentReq); err != nil {
-		if apierrors.IsInvalid(err) || apierrors.IsBadRequest(err) || apierrors.IsAlreadyExists(err) {
+		if apierrors.IsAlreadyExists(err) {
+			writeError(w, http.StatusConflict, fmt.Sprintf("AgentRequest already exists: %v", err))
+			return
+		}
+		if apierrors.IsInvalid(err) || apierrors.IsBadRequest(err) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid AgentRequest: %v", err))
 			return
 		}
@@ -408,21 +412,26 @@ func (s *Server) patchAgentRequestCondition(
 		ns = defaultNamespace
 	}
 
-	var current v1alpha1.AgentRequest
-	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &current); err != nil {
-		writeError(w, http.StatusNotFound, "AgentRequest not found")
-		return
-	}
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var current v1alpha1.AgentRequest
+		if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &current); err != nil {
+			return err
+		}
 
-	meta.SetStatusCondition(&current.Status.Conditions, metav1.Condition{
-		Type:    conditionType,
-		Status:  metav1.ConditionTrue,
-		Reason:  reason,
-		Message: message,
-	})
+		meta.SetStatusCondition(&current.Status.Conditions, metav1.Condition{
+			Type:    conditionType,
+			Status:  metav1.ConditionTrue,
+			Reason:  reason,
+			Message: message,
+		})
 
-	if err := s.client.Status().Update(r.Context(), &current); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update status: %v", err))
+		return s.client.Status().Update(r.Context(), &current)
+	}); err != nil {
+		if apierrors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, "AgentRequest not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update status: %v", err))
+		}
 		return
 	}
 

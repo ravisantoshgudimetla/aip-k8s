@@ -46,6 +46,14 @@ func (s *Server) handleCreateSafetyPolicy(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := s.client.Create(r.Context(), &sp); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		if apierrors.IsInvalid(err) || apierrors.IsBadRequest(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -129,15 +137,15 @@ func (s *Server) handleReplaceSafetyPolicy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	var updated v1alpha1.SafetyPolicy
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		var existing v1alpha1.SafetyPolicy
-		if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &existing); err != nil {
+		if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &updated); err != nil {
 			return err
 		}
-		existing.Spec = newSP.Spec
-		existing.Labels = newSP.Labels
-		existing.Annotations = newSP.Annotations
-		return s.client.Update(r.Context(), &existing)
+		updated.Spec = newSP.Spec
+		updated.Labels = newSP.Labels
+		updated.Annotations = newSP.Annotations
+		return s.client.Update(r.Context(), &updated)
 	})
 
 	if err != nil {
@@ -149,8 +157,6 @@ func (s *Server) handleReplaceSafetyPolicy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var updated v1alpha1.SafetyPolicy
-	_ = s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &updated)
 	writeJSON(w, http.StatusOK, updated)
 }
 
