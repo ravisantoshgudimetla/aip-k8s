@@ -50,6 +50,14 @@ rules:
 - apiGroups:
   - governance.aip.io
   resources:
+  - agentgraduationpolicies
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - governance.aip.io
+  resources:
   - agentrequests
   - auditrecords
   - governedresources
@@ -74,6 +82,7 @@ rules:
   - governance.aip.io
   resources:
   - agentrequests/status
+  - agenttrustprofiles/status
   - auditrecords/status
   - diagnosticaccuracysummaries/status
   - governedresources/status
@@ -85,6 +94,7 @@ rules:
 - apiGroups:
   - governance.aip.io
   resources:
+  - agenttrustprofiles
   - diagnosticaccuracysummaries
   verbs:
   - create

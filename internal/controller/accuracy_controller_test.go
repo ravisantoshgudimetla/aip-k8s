@@ -55,7 +55,7 @@ var _ = Describe("DiagnosticAccuracy Controller", func() {
 			// Update status
 			base := agentReq.DeepCopy()
 			agentReq.Status.Phase = governancev1alpha1.PhaseCompleted
-			agentReq.Status.Verdict = "correct"
+			agentReq.Status.Verdict = verdictCorrect
 			now := metav1.Now()
 			agentReq.Status.VerdictAt = &now
 			Expect(k8sClient.Status().Patch(context.Background(), agentReq, client.MergeFrom(base))).To(Succeed())
@@ -100,7 +100,7 @@ var _ = Describe("DiagnosticAccuracy Controller", func() {
 
 			base := agentReq.DeepCopy()
 			agentReq.Status.Phase = governancev1alpha1.PhaseCompleted
-			agentReq.Status.Verdict = "incorrect"
+			agentReq.Status.Verdict = verdictIncorrect
 			agentReq.Status.VerdictReasonCode = "wrong_diagnosis"
 			now := metav1.Now()
 			agentReq.Status.VerdictAt = &now
@@ -147,7 +147,7 @@ var _ = Describe("DiagnosticAccuracy Controller", func() {
 
 			base := agentReq.DeepCopy()
 			agentReq.Status.Phase = governancev1alpha1.PhaseCompleted
-			agentReq.Status.Verdict = "incorrect"
+			agentReq.Status.Verdict = verdictIncorrect
 			agentReq.Status.VerdictReasonCode = "bad_timing"
 			now := metav1.Now()
 			agentReq.Status.VerdictAt = &now
@@ -264,7 +264,7 @@ var _ = Describe("DiagnosticAccuracy Controller", func() {
 
 			baseReq := agentReq.DeepCopy()
 			agentReq.Status.Phase = governancev1alpha1.PhaseCompleted
-			agentReq.Status.Verdict = "correct"
+			agentReq.Status.Verdict = verdictCorrect
 			now := metav1.Now()
 			agentReq.Status.VerdictAt = &now
 			Expect(k8sClient.Status().Patch(context.Background(), agentReq, client.MergeFrom(baseReq))).To(Succeed())

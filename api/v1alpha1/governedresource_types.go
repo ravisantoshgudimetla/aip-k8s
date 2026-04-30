@@ -76,6 +76,23 @@ type GovernedResourceSpec struct {
 	// Flip to false when the admin has confidence in the agent.
 	// +optional
 	SoakMode bool `json:"soakMode,omitempty"`
+
+	// TrustRequirements enforces a floor and ceiling on agent trust level for this resource.
+	// +optional
+	TrustRequirements *TrustRequirements `json:"trustRequirements,omitempty"`
+}
+
+// TrustRequirements enforces a floor and ceiling on agent trust level for a resource.
+type TrustRequirements struct {
+	// MinTrustLevel is the minimum trust level required to execute against this resource.
+	// Agents below this level are rejected. Observer-mode requests bypass this check.
+	// +kubebuilder:validation:Enum=Observer;Advisor;Supervised;Trusted;Autonomous
+	MinTrustLevel string `json:"minTrustLevel"`
+
+	// MaxAutonomyLevel caps the autonomy of even highly-trusted agents on this resource.
+	// An agent at Trusted with a ceiling of Supervised still requires human approval.
+	// +kubebuilder:validation:Enum=Observer;Advisor;Supervised;Trusted;Autonomous
+	MaxAutonomyLevel string `json:"maxAutonomyLevel"`
 }
 
 // +kubebuilder:object:root=true

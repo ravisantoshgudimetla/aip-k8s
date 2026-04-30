@@ -169,6 +169,24 @@ const (
 	ModeGovern  = "govern"
 )
 
+// Trust levels for agent graduation ladder.
+const (
+	TrustLevelObserver   = "Observer"
+	TrustLevelAdvisor    = "Advisor"
+	TrustLevelSupervised = "Supervised"
+	TrustLevelTrusted    = "Trusted"
+	TrustLevelAutonomous = "Autonomous"
+)
+
+// TrustLevelOrder maps trust levels to their ordinal position for comparison.
+var TrustLevelOrder = map[string]int{
+	TrustLevelObserver:   0,
+	TrustLevelAdvisor:    1,
+	TrustLevelSupervised: 2,
+	TrustLevelTrusted:    3,
+	TrustLevelAutonomous: 4,
+}
+
 // Condition types
 const (
 	ConditionPolicyEvaluated  = "PolicyEvaluated"  // True when all policies evaluated successfully

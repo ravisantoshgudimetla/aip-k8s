@@ -70,6 +70,7 @@ func TestGatewayIntegration(t *testing.T) {
 	runRequestLifecycleTests(t, mgrClient, directClient, ctx)
 	runAuthAndApprovalTests(t, mgrClient, directClient, ctx)
 	runSoakModeAndVerdictTests(t, mgrClient, directClient, ctx)
+	runTrustGateTests(t, mgrClient, directClient, ctx)
 }
 
 func startTestManager(t *testing.T, cfg *rest.Config) client.Client {
@@ -112,6 +113,15 @@ func startTestManager(t *testing.T, cfg *rest.Config) client.Client {
 	}).SetupWithManager(mgr)
 	if err != nil {
 		t.Fatalf("Failed to setup DiagnosticAccuracyReconciler: %v", err)
+	}
+
+	err = (&controller.AgentTrustProfileReconciler{
+		Client:    mgr.GetClient(),
+		APIReader: mgr.GetAPIReader(),
+		Scheme:    mgr.GetScheme(),
+	}).SetupWithManager(mgr)
+	if err != nil {
+		t.Fatalf("Failed to setup AgentTrustProfileReconciler: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

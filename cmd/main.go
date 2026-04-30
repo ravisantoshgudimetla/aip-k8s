@@ -248,6 +248,14 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "DiagnosticAccuracy")
 		os.Exit(1)
 	}
+	if err := (&controller.AgentTrustProfileReconciler{
+		Client:    mgr.GetClient(),
+		APIReader: mgr.GetAPIReader(),
+		Scheme:    mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "AgentTrustProfile")
+		os.Exit(1)
+	}
 
 	gcMgr := &gc.GCManager{
 		APIReader: mgr.GetAPIReader(),
