@@ -150,6 +150,10 @@ func (r *AgentTrustProfileReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 	}
 
+	// Compute a separate rolling accuracy for demotion evaluation using DemotionPolicy.WindowSize.
+	// Falls back to recentAccuracy (EvaluationWindow) if WindowSize is not set.
+	demotionAccuracy := r.computeDemotionAccuracy(ctx, ns, agentID, recentAccuracy, levelFound, policy, logger)
+
 	// Count terminal executions.
 	totalExecutions, successRate, err := r.countTerminalExecutions(ctx, ns, agentID)
 	if err != nil {
@@ -170,7 +174,7 @@ func (r *AgentTrustProfileReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		newRank, _ := governancev1alpha1.TrustLevelRank(newLevel)
 		oldRank, _ := governancev1alpha1.TrustLevelRank(oldLevel)
 		if newRank < oldRank {
-			if r.checkDemotion(&profile, oldLevel, recentAccuracy, policy) {
+			if r.checkDemotion(&profile, oldLevel, demotionAccuracy, policy) {
 				demoted = true
 			} else {
 				newLevel = oldLevel // grace period active — hold at current level
@@ -205,18 +209,42 @@ func (r *AgentTrustProfileReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	// Emit audit record if trust level changed.
 	if newLevel != oldLevel {
-		if err := r.emitTrustProfileAudit(ctx, &profile, oldLevel, newLevel, demoted); err != nil {
-			logger.Error(err, "Failed to emit trust profile audit record")
+		if err := r.emitTrustProfileAuditWithRetry(ctx, &profile, oldLevel, newLevel, demoted); err != nil {
+			logger.Error(err, "Failed to emit trust profile audit record after retries")
 		}
 	}
 
 	return ctrl.Result{}, nil
 }
 
+// computeDemotionAccuracy computes accuracy over DemotionPolicy.WindowSize for demotion
+// evaluation. Falls back to recentAccuracy if WindowSize is unset or the computation fails.
+func (r *AgentTrustProfileReconciler) computeDemotionAccuracy(
+	ctx context.Context,
+	ns, agentID string,
+	recentAccuracy float64,
+	levelFound bool,
+	policy governancev1alpha1.AgentGraduationPolicy,
+	logger interface{ Error(error, string, ...any) },
+) float64 {
+	if !levelFound || policy.Spec.DemotionPolicy.WindowSize <= 0 {
+		return recentAccuracy
+	}
+	da, _, err := r.computeRollingAccuracy(ctx, ns, agentID, policy.Spec.DemotionPolicy.WindowSize)
+	if err != nil {
+		logger.Error(err, "Failed to compute demotion rolling accuracy, falling back to evaluation window")
+		return recentAccuracy
+	}
+	if da == nil {
+		return recentAccuracy
+	}
+	return *da
+}
+
 // computeRollingAccuracy reads the last N verdicted AuditRecords and computes accuracy.
 func (r *AgentTrustProfileReconciler) computeRollingAccuracy(ctx context.Context, ns, agentID string, count int64) (*float64, int64, error) {
 	var auditList governancev1alpha1.AuditRecordList
-	if err := r.List(ctx, &auditList, client.InNamespace(ns), client.MatchingLabels{"aip.io/agentIdentity": agentID}); err != nil {
+	if err := r.List(ctx, &auditList, client.InNamespace(ns), client.MatchingLabels{"aip.io/agentIdentity": agentID}, client.Limit(maxRecentVerdicts)); err != nil {
 		return nil, 0, err
 	}
 
@@ -356,16 +384,17 @@ func (r *AgentTrustProfileReconciler) checkDemotion(profile *governancev1alpha1.
 		}
 	}
 
-	// 2. Evaluate accuracy-band thresholds with buffer
+	// 2. Evaluate accuracy-band thresholds. DemotionBuffer (per-level) takes precedence
+	// over AccuracyDropThreshold (global fallback from DemotionPolicy).
 	for _, level := range policy.Spec.Levels {
-		if level.Name != oldLevel || level.Accuracy == nil {
+		if level.Name != oldLevel || level.Accuracy == nil || level.Accuracy.Min == nil {
 			continue
 		}
-		if level.Accuracy.Min == nil || level.Accuracy.DemotionBuffer == nil {
-			continue
+		buffer := policy.Spec.DemotionPolicy.AccuracyDropThreshold
+		if level.Accuracy.DemotionBuffer != nil {
+			buffer = *level.Accuracy.DemotionBuffer
 		}
-		threshold := *level.Accuracy.Min - *level.Accuracy.DemotionBuffer
-		return recentAccuracy < threshold
+		return recentAccuracy < *level.Accuracy.Min-buffer
 	}
 	return false
 }
@@ -405,6 +434,18 @@ func (r *AgentTrustProfileReconciler) emitTrustProfileAudit(ctx context.Context,
 	}
 
 	return r.Create(ctx, audit)
+}
+
+func (r *AgentTrustProfileReconciler) emitTrustProfileAuditWithRetry(ctx context.Context, profile *governancev1alpha1.AgentTrustProfile, oldLevel, newLevel string, demoted bool) error {
+	var lastErr error
+	for range 3 {
+		if err := r.emitTrustProfileAudit(ctx, profile, oldLevel, newLevel, demoted); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	return lastErr
 }
 
 func (r *AgentTrustProfileReconciler) now() time.Time {

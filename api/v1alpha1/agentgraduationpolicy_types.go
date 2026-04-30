@@ -32,6 +32,7 @@ type AgentGraduationPolicySpec struct {
 	AwaitingVerdictTTL string `json:"awaitingVerdictTTL,omitempty"`
 
 	// Levels defines the graduation levels and their requirements.
+	// +kubebuilder:validation:MinItems=1
 	Levels []GraduationLevel `json:"levels"`
 
 	// DemotionPolicy defines when an agent should be demoted.
