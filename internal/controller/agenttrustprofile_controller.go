@@ -327,7 +327,11 @@ func (r *AgentTrustProfileReconciler) resolveTrustLevel(recentAccuracy float64, 
 func (r *AgentTrustProfileReconciler) checkDemotion(profile *governancev1alpha1.AgentTrustProfile, oldLevel string, recentAccuracy float64, policy governancev1alpha1.AgentGraduationPolicy) bool {
 	// 1. Evaluate GracePeriod if configured
 	if policy.Spec.DemotionPolicy.GracePeriod != "" {
-		if grace, err := time.ParseDuration(policy.Spec.DemotionPolicy.GracePeriod); err == nil {
+		grace, err := time.ParseDuration(policy.Spec.DemotionPolicy.GracePeriod)
+		if err != nil {
+			log.Log.Error(err, "AgentGraduationPolicy has unparseable DemotionPolicy.GracePeriod — grace period skipped",
+				"policy", policy.Name, "value", policy.Spec.DemotionPolicy.GracePeriod)
+		} else {
 			lastPromoted := profile.Status.LastPromotedAt
 			if lastPromoted == nil {
 				// If never promoted, we use creation timestamp as a fallback

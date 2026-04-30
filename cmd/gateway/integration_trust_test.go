@@ -124,7 +124,9 @@ func profileLevelPrereqs(level string) (numVerdicts, numExecs int) {
 // It waits for backing data to be visible in the informer cache (mgrClient) before
 // creating the profile, ensuring the first reconcile computes the right level in one
 // shot rather than converging via repeated rate-limited cycles.
-func setProfileLevel(ctx context.Context, gm *gomega.WithT, mgrClient, directClient client.Client, agentID, level string) {
+func setProfileLevel(
+	ctx context.Context, gm *gomega.WithT, mgrClient, directClient client.Client, agentID, level string,
+) {
 	profileName := summaryNameForAgent(agentID)
 	numVerdicts, numExecs := profileLevelPrereqs(level)
 
@@ -219,7 +221,8 @@ func setProfileLevel(ctx context.Context, gm *gomega.WithT, mgrClient, directCli
 	// (triggered by profile creation via For(&AgentTrustProfile{})) will compute the
 	// correct level immediately.
 	profile := &v1alpha1.AgentTrustProfile{}
-	if err := directClient.Get(ctx, types.NamespacedName{Name: profileName, Namespace: testDefaultNS}, profile); err != nil {
+	profileKey := types.NamespacedName{Name: profileName, Namespace: testDefaultNS}
+	if err := directClient.Get(ctx, profileKey, profile); err != nil {
 		profile = &v1alpha1.AgentTrustProfile{
 			ObjectMeta: metav1.ObjectMeta{Name: profileName, Namespace: testDefaultNS},
 			Spec:       v1alpha1.AgentTrustProfileSpec{AgentIdentity: agentID},

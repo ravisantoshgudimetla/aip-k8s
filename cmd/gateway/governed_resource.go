@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sync"
 
 	"github.com/gobwas/glob"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/agent-control-plane/aip-k8s/api/v1alpha1"
 )
@@ -83,12 +84,11 @@ func (s *Server) evaluateTrustGate(
 	profileName := summaryNameForAgent(agentIdentity)
 	var profile v1alpha1.AgentTrustProfile
 	if err := s.client.Get(ctx, types.NamespacedName{Name: profileName, Namespace: ns}, &profile); err != nil {
-		if client.IgnoreNotFound(err) == nil {
-			// Profile not found — treat as Observer.
-			profile.Status.TrustLevel = v1alpha1.TrustLevelObserver
-		} else {
-			return trustGateResult{}, err
+		if !apierrors.IsNotFound(err) {
+			return trustGateResult{}, fmt.Errorf("getting AgentTrustProfile %s: %w", profileName, err)
 		}
+		// Profile not found — treat as Observer.
+		profile.Status.TrustLevel = v1alpha1.TrustLevelObserver
 	}
 
 	effectiveLevel := profile.Status.TrustLevel
@@ -114,7 +114,12 @@ func (s *Server) evaluateTrustGate(
 	var policy v1alpha1.AgentGraduationPolicy
 	requiresApproval := true // fail-closed default
 	canExecute := false      // fail-closed default
-	if err := s.client.Get(ctx, types.NamespacedName{Name: "default"}, &policy); err == nil {
+	if err := s.client.Get(ctx, types.NamespacedName{Name: "default"}, &policy); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return trustGateResult{}, fmt.Errorf("getting AgentGraduationPolicy default: %w", err)
+		}
+		// No policy found — use fail-closed defaults.
+	} else {
 		for _, level := range policy.Spec.Levels {
 			if level.Name == effectiveAutonomy {
 				canExecute = level.CanExecute
@@ -128,7 +133,7 @@ func (s *Server) evaluateTrustGate(
 		v1alpha1.AnnotationEffectiveTrustLevel: effectiveAutonomy,
 	}
 	if !canExecute {
-		annotations[v1alpha1.AnnotationCanExecute] = "false"
+		annotations[v1alpha1.AnnotationCanExecute] = boolToStr(false)
 	} else {
 		annotations[v1alpha1.AnnotationRequiresHumanApproval] = boolToStr(requiresApproval)
 	}

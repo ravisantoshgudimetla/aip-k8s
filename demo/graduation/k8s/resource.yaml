@@ -1,0 +1,15 @@
+apiVersion: governance.aip.io/v1alpha1
+kind: GovernedResource
+metadata:
+  name: demo-deployments
+spec:
+  uriPattern: "k8s://demo/default/deployment/*"
+  permittedActions:
+    - scale-up
+    - scale-down
+    - restart
+  contextFetcher: none
+  description: "Demo deployments — full trust ladder enabled."
+  trustRequirements:
+    minTrustLevel: Observer
+    maxAutonomyLevel: Autonomous

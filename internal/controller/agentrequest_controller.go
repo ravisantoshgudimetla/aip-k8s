@@ -657,6 +657,13 @@ func (r *AgentRequestReconciler) handleEvaluationResult(ctx context.Context, age
 		// Trusted/Autonomous agents (via gateway trust gate) skip human approval.
 		if agentReq.Annotations[governancev1alpha1.AnnotationRequiresHumanApproval] == "false" {
 			logger.Info("Auto-approving AgentRequest via trust gate", "name", agentReq.Name, "trustLevel", agentReq.Annotations[governancev1alpha1.AnnotationEffectiveTrustLevel])
+			if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
+				logger.Error(err, "Failed to update Status with evaluation results")
+				return ctrl.Result{}, err
+			}
+			if err := r.Create(ctx, policyEvalAudit); err != nil {
+				logger.Error(err, "Failed to create policy.evaluated AuditRecord")
+			}
 			return r.handleLockAcquisition(ctx, agentReq, fromPhase)
 		}
 		meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{

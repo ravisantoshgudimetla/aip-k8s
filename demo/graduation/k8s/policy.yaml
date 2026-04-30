@@ -1,0 +1,55 @@
+apiVersion: governance.aip.io/v1alpha1
+kind: AgentGraduationPolicy
+metadata:
+  # Gateway always looks up the policy named "default".
+  name: default
+spec:
+  # Rolling window: last 5 verdicts drive accuracy (compressed for demo speed).
+  evaluationWindow:
+    count: 5
+
+  # Ungraded Observer requests expire after 1 hour in demo mode.
+  awaitingVerdictTTL: "1h"
+
+  levels:
+    - name: Observer
+      canExecute: false
+
+    - name: Advisor
+      canExecute: true
+      requiresHumanApproval: true
+      accuracy:
+        min: 0.70
+        demotionBuffer: 0.05
+
+    - name: Supervised
+      canExecute: true
+      requiresHumanApproval: true
+      accuracy:
+        min: 0.80
+        demotionBuffer: 0.05
+      executions:
+        min: 3
+
+    - name: Trusted
+      canExecute: true
+      requiresHumanApproval: false
+      accuracy:
+        min: 0.90
+        demotionBuffer: 0.05
+      executions:
+        min: 6
+
+    - name: Autonomous
+      canExecute: true
+      requiresHumanApproval: false
+      accuracy:
+        min: 0.95
+        demotionBuffer: 0.02
+      executions:
+        min: 10
+
+  demotionPolicy:
+    accuracyDropThreshold: 0.10
+    windowSize: 5
+    gracePeriod: "5m"
