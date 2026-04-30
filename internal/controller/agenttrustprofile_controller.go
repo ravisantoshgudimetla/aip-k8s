@@ -40,7 +40,6 @@ import (
 
 const (
 	defaultGraduationPolicyName = "default"
-	maxRecentVerdicts           = 100
 )
 
 // AgentTrustProfileReconciler maintains AgentTrustProfile status based on
@@ -244,7 +243,7 @@ func (r *AgentTrustProfileReconciler) computeDemotionAccuracy(
 // computeRollingAccuracy reads the last N verdicted AuditRecords and computes accuracy.
 func (r *AgentTrustProfileReconciler) computeRollingAccuracy(ctx context.Context, ns, agentID string, count int64) (*float64, int64, error) {
 	var auditList governancev1alpha1.AuditRecordList
-	if err := r.List(ctx, &auditList, client.InNamespace(ns), client.MatchingLabels{"aip.io/agentIdentity": agentID}, client.Limit(maxRecentVerdicts)); err != nil {
+	if err := r.List(ctx, &auditList, client.InNamespace(ns), client.MatchingLabels{"aip.io/agentIdentity": agentID}); err != nil {
 		return nil, 0, err
 	}
 

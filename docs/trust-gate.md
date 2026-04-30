@@ -15,10 +15,10 @@ fail-closed defaults (`canExecute=false`). Without `trustRequirements` on a
 
 ```bash
 # 1. Apply the graduation policy (namespace-scoped, name must be "default")
-kubectl apply -f config/samples/governance_v1alpha1_agentgraduationpolicy.yaml
+kubectl apply -n <namespace> -f config/samples/governance_v1alpha1_agentgraduationpolicy.yaml
 
 # 2. Apply a GovernedResource with trust requirements
-kubectl apply -f config/samples/governance_v1alpha1_governedresource.yaml
+kubectl apply -n <namespace> -f config/samples/governance_v1alpha1_governedresource.yaml
 
 # 3. Submit a request as a new agent (Observer level — no profile yet)
 curl -s -X POST http://localhost:8080/agent-requests \
