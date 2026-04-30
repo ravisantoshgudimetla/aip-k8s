@@ -46,6 +46,9 @@ func matchGovernedResource(items []v1alpha1.GovernedResource, targetURI string) 
 				continue
 			}
 			globMu.Lock()
+			if len(globCache) > 1000 {
+				globCache = make(map[string]glob.Glob)
+			}
 			globCache[gr.Spec.URIPattern] = g
 			globMu.Unlock()
 		}
@@ -98,18 +101,25 @@ func (s *Server) evaluateTrustGate(
 
 	// Check minimum trust level.
 	effRank, _ := v1alpha1.TrustLevelRank(effectiveLevel)
-	minRank, _ := v1alpha1.TrustLevelRank(tr.MinTrustLevel)
-	if effRank < minRank {
-		return trustGateResult{
-			rejected: true,
-			message:  "agent trust level " + effectiveLevel + " does not meet resource minimum " + tr.MinTrustLevel,
-		}, nil
+	if tr.MinTrustLevel != "" {
+		minRank, minOk := v1alpha1.TrustLevelRank(tr.MinTrustLevel)
+		if !minOk {
+			return trustGateResult{
+				rejected: true,
+				message:  "GovernedResource has unknown MinTrustLevel: " + tr.MinTrustLevel,
+			}, nil
+		}
+		if effRank < minRank {
+			return trustGateResult{
+				rejected: true,
+				message:  "agent trust level " + effectiveLevel + " does not meet resource minimum " + tr.MinTrustLevel,
+			}, nil
+		}
 	}
 
 	// Compute effective autonomy = min(agent level, maxAutonomyLevel).
 	effectiveAutonomy := effectiveLevel
-	maxRank, _ := v1alpha1.TrustLevelRank(tr.MaxAutonomyLevel)
-	if effRank > maxRank {
+	if maxRank, maxOk := v1alpha1.TrustLevelRank(tr.MaxAutonomyLevel); maxOk && effRank > maxRank {
 		effectiveAutonomy = tr.MaxAutonomyLevel
 	}
 

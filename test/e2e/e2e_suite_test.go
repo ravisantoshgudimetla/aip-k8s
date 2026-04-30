@@ -79,6 +79,17 @@ var _ = BeforeSuite(func() {
 		setupCertManager()
 	}
 
+	// Install CRDs before any Describe container runs. Ginkgo randomises top-level
+	// Describe order, so tests that use governance CRDs cannot rely on the Manager
+	// BeforeAll to have run first. HELM_DEPLOYED=true skips this because Helm
+	// already installs CRDs during chart deployment.
+	if os.Getenv("HELM_DEPLOYED") != "true" {
+		By("installing CRDs")
+		cmd := exec.Command("make", "install")
+		_, err := utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install CRDs")
+	}
+
 	By("setting up typed Kubernetes client for assertions")
 	scheme := runtime.NewScheme()
 	Expect(clientgoscheme.AddToScheme(scheme)).To(Succeed())

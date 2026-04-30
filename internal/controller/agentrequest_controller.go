@@ -657,12 +657,18 @@ func (r *AgentRequestReconciler) handleEvaluationResult(ctx context.Context, age
 		// Trusted/Autonomous agents (via gateway trust gate) skip human approval.
 		if agentReq.Annotations[governancev1alpha1.AnnotationRequiresHumanApproval] == "false" {
 			logger.Info("Auto-approving AgentRequest via trust gate", "name", agentReq.Name, "trustLevel", agentReq.Annotations[governancev1alpha1.AnnotationEffectiveTrustLevel])
+			meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{
+				Type:    governancev1alpha1.ConditionApproved,
+				Status:  metav1.ConditionTrue,
+				Reason:  "AutoApprovedByTrustGate",
+				Message: "Agent trust level satisfies GovernedResource requirements; human approval not required",
+			})
 			if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
 				logger.Error(err, "Failed to update Status with evaluation results")
 				return ctrl.Result{}, err
 			}
-			if err := r.Create(ctx, policyEvalAudit); err != nil {
-				logger.Error(err, "Failed to create policy.evaluated AuditRecord")
+			if err := r.createAuditWithRetry(ctx, policyEvalAudit); err != nil {
+				logger.Error(err, "Failed to create policy.evaluated AuditRecord after retries")
 			}
 			return ctrl.Result{}, nil
 		}
@@ -682,8 +688,8 @@ func (r *AgentRequestReconciler) handleEvaluationResult(ctx context.Context, age
 
 	// Now emit the audit record(s) safely. Using a dedicated patch for the audit creation
 	// to ensure we don't return from handleLockAcquisition without the audit trace.
-	if err := r.Create(ctx, policyEvalAudit); err != nil {
-		logger.Error(err, "Failed to create policy.evaluated AuditRecord")
+	if err := r.createAuditWithRetry(ctx, policyEvalAudit); err != nil {
+		logger.Error(err, "Failed to create policy.evaluated AuditRecord after retries")
 	}
 
 	if result.Action == governancev1alpha1.ResultDeny {
@@ -1224,6 +1230,20 @@ func (r *AgentRequestReconciler) fetchContextFromProvider(ctx context.Context, a
 	}
 
 	return fetchedJSON, nil
+}
+
+// createAuditWithRetry attempts to create an AuditRecord up to 3 times, tolerating
+// AlreadyExists (idempotent). Returns the last error if all attempts fail.
+func (r *AgentRequestReconciler) createAuditWithRetry(ctx context.Context, audit *governancev1alpha1.AuditRecord) error {
+	var lastErr error
+	for range 3 {
+		if err := r.Create(ctx, audit); err == nil || errors.IsAlreadyExists(err) {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	return lastErr
 }
 
 // SetupWithManager sets up the controller with the Manager.

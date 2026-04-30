@@ -57,8 +57,8 @@ var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
 
 	// Before running the tests, set up the environment by creating the namespace,
-	// enforce the restricted security policy to the namespace, installing CRDs,
-	// and deploying the controller.
+	// enforcing the restricted security policy, and deploying the controller.
+	// CRDs are installed in BeforeSuite so they are available to all Describe containers.
 	BeforeAll(func() {
 		By("creating manager namespace")
 		// Use apply instead of create so this is idempotent: if Phase 6 BeforeAll
@@ -77,15 +77,6 @@ var _ = Describe("Manager", Ordered, func() {
 			"pod-security.kubernetes.io/enforce=restricted")
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
-
-		By("installing CRDs")
-		if os.Getenv("HELM_DEPLOYED") != "true" {
-			cmd = exec.Command("make", "install")
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
-		} else {
-			By("skipping make install; HELM_DEPLOYED=true")
-		}
 
 		By("deploying the controller-manager")
 		if os.Getenv("HELM_DEPLOYED") != "true" {

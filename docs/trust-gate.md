@@ -14,11 +14,11 @@ fail-closed defaults (`canExecute=false`). Without `trustRequirements` on a
 ## Quick start
 
 ```bash
-# 1. Apply the graduation policy (cluster-wide, name must be "default")
-kubectl apply -f config/samples/governance_v1alpha1_agentgraduationpolicy.yaml
+# 1. Apply the graduation policy (namespace-scoped, name must be "default")
+kubectl apply -n <namespace> -f config/samples/governance_v1alpha1_agentgraduationpolicy.yaml
 
 # 2. Apply a GovernedResource with trust requirements
-kubectl apply -f config/samples/governance_v1alpha1_governedresource.yaml
+kubectl apply -n <namespace> -f config/samples/governance_v1alpha1_governedresource.yaml
 
 # 3. Submit a request as a new agent (Observer level — no profile yet)
 curl -s -X POST http://localhost:8080/agent-requests \
@@ -65,7 +65,7 @@ The controller reads those annotations and routes accordingly:
 
 | `can-execute` | `requires-human-approval` | Outcome |
 |---|---|---|
-| `false` | — | Request rejected before creation |
+| `false` | — | Request created, routes to `AwaitingVerdict` (`TrustGateBlock`) |
 | `true` | `true` | Request created, routes to `Pending` (human approval) |
 | `true` | `false` | Request created, auto-approved, proceeds to lock acquisition |
 
@@ -80,7 +80,8 @@ The controller reads those annotations and routes accordingly:
 | `governance.aip.io/requires-human-approval` | `"true"` / `"false"` | Whether a human reviewer must approve |
 
 `can-execute` and `requires-human-approval` are mutually exclusive — only one is
-set per request. If `can-execute=false`, the request never reaches the controller.
+set per request. If `can-execute=false`, the controller routes the request to
+`PhaseAwaitingVerdict` with reason `TrustGateBlock` so a reviewer can grade it.
 
 To inspect what the gateway decided on a submitted request:
 
@@ -96,8 +97,8 @@ kubectl get agentrequest <name> -n <namespace> -o jsonpath='{.metadata.annotatio
 
 ## AgentGraduationPolicy fields
 
-`AgentGraduationPolicy` is cluster-scoped. The gateway and controller both look up the
-policy named **`default`** — this name is required.
+`AgentGraduationPolicy` is namespace-scoped. The gateway and controller both look up the
+policy named **`default`** in the agent's namespace — this name is required.
 
 ```yaml
 apiVersion: governance.aip.io/v1alpha1

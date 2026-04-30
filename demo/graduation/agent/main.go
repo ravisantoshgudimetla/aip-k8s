@@ -156,7 +156,11 @@ func getTrustLevel(ns string) (string, error) {
 
 func waitForLevel(ns, target string) {
 	fmt.Printf("%s  ⏳ Waiting for trust profile to reach %s...%s\n", dim, target, reset)
+	deadline := time.Now().Add(15 * time.Minute)
 	for {
+		if time.Now().After(deadline) {
+			log.Fatalf("timed out waiting for trust profile to reach %s after 15 minutes", target)
+		}
 		level, err := getTrustLevel(ns)
 		if err != nil {
 			log.Fatalf("getTrustLevel: %v", err)
@@ -237,7 +241,6 @@ func observerPhase(gateway, ns string, n int) {
 
 	for i := range n {
 		target, reason := nextTarget()
-		reqCounter++
 		snippet := reason[:min(60, len(reason))]
 		fmt.Printf("  %s[%d/%d]%s Submitting observation: %s%s%s\n", dim, i+1, n, reset, dim, snippet, reset)
 
