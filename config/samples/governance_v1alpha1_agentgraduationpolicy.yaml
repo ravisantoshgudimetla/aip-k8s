@@ -1,0 +1,84 @@
+apiVersion: governance.aip.io/v1alpha1
+kind: AgentGraduationPolicy
+metadata:
+  # The gateway always looks up the policy named "default".
+  # This name is required — do not change it.
+  name: default
+spec:
+  # Rolling window: the last 50 graded verdicts drive trust level computation.
+  # Older verdicts are still stored but do not affect the current level.
+  evaluationWindow:
+    count: 50
+
+  # Ungraded Observer requests expire after 7 days and are excluded from
+  # accuracy counts — they count neither as correct nor incorrect.
+  awaitingVerdictTTL: "168h"
+
+  # Each level defines the accuracy and execution thresholds an agent must
+  # meet to hold that level, and what happens to requests at that level.
+  #
+  # Promotion: both accuracy.min AND executions.min must be satisfied.
+  # Demotion: triggered when recentAccuracy < accuracy.min - accuracy.demotionBuffer.
+  #           Execution count never causes demotion.
+  levels:
+    - name: Observer
+      # Requests are evaluated and graded but never executed.
+      # The agent builds an accuracy signal before any action is taken.
+      canExecute: false
+      accuracy:
+        max: 0.70
+
+    - name: Advisor
+      # Execution allowed. Human approval required for every request.
+      canExecute: true
+      requiresHumanApproval: true
+      accuracy:
+        min: 0.70
+        max: 0.85
+        demotionBuffer: 0.02   # demotion triggers at < 0.68, preventing boundary flapping
+      executions:
+        min: 0
+        max: 20
+
+    - name: Supervised
+      # Execution allowed. Human approval required for every request.
+      canExecute: true
+      requiresHumanApproval: true
+      accuracy:
+        min: 0.85
+        max: 0.92
+        demotionBuffer: 0.02
+      executions:
+        min: 20
+        max: 50
+
+    - name: Trusted
+      # Auto-approved when SafetyPolicy passes. No human in the loop.
+      canExecute: true
+      requiresHumanApproval: false
+      accuracy:
+        min: 0.92
+        max: 0.97
+        demotionBuffer: 0.02
+      executions:
+        min: 50
+        max: 100
+
+    - name: Autonomous
+      # Auto-approved when SafetyPolicy passes. No human in the loop.
+      canExecute: true
+      requiresHumanApproval: false
+      accuracy:
+        min: 0.97
+      executions:
+        min: 100
+
+  demotionPolicy:
+    # Accuracy must drop by more than 10% before demotion is considered.
+    # The per-level demotionBuffer above provides additional hysteresis.
+    accuracyDropThreshold: 0.10
+    # Number of recent verdicts examined during demotion checks.
+    windowSize: 20
+    # Grace period after promotion: an agent cannot be demoted for 24 hours
+    # after reaching a new level, preventing rapid oscillation.
+    gracePeriod: "24h"

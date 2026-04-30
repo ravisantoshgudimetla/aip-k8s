@@ -175,74 +175,8 @@ func (r *AgentRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// 3. Initialize Phase if empty
-	if agentReq.Status.Phase == "" && !meta.IsStatusConditionTrue(agentReq.Status.Conditions, "RequestSubmitted") {
-		// observe-mode requests are recorded as observations only; they skip
-		// SafetyPolicy eval, OpsLock, and human approval and are immediately terminal.
-		if agentReq.Spec.Mode == governancev1alpha1.ModeObserve {
-			log.FromContext(ctx).Info("Initializing AgentRequest phase", "name", agentReq.Name, "phase", governancev1alpha1.PhaseObserved, "mode", governancev1alpha1.ModeObserve)
-			agentRequestTotal.WithLabelValues(governancev1alpha1.PhaseObserved).Inc()
-			base := agentReq.DeepCopy()
-			agentReq.Status.Phase = governancev1alpha1.PhaseObserved
-			meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{
-				Type:    "RequestSubmitted",
-				Status:  metav1.ConditionTrue,
-				Reason:  "ObserveMode",
-				Message: "Request recorded as observation; governance lifecycle skipped",
-			})
-			if err := r.Status().Patch(ctx, &agentReq, client.MergeFrom(base)); err != nil {
-				return ctrl.Result{}, err
-			}
-			if err := r.emitAuditRecord(ctx, &agentReq, governancev1alpha1.AuditEventRequestObserved, "", governancev1alpha1.PhaseObserved); err != nil {
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{}, nil
-		}
-
-		phase := governancev1alpha1.PhasePending
-		reason := "Initialization"
-		message := "Initial phase set to Pending"
-
-		// Check for SoakMode on the GovernedResource
-		if agentReq.Spec.GovernedResourceRef != nil {
-			var gr governancev1alpha1.GovernedResource
-			if err := reader.Get(ctx, types.NamespacedName{Name: agentReq.Spec.GovernedResourceRef.Name}, &gr); err == nil {
-				if gr.Spec.SoakMode {
-					phase = governancev1alpha1.PhaseAwaitingVerdict
-					reason = "SoakModeAdmission"
-					message = "Initial phase set to AwaitingVerdict due to GovernedResource SoakMode"
-				}
-			} else if !errors.IsNotFound(err) {
-				return ctrl.Result{}, fmt.Errorf("fetching GovernedResource %s: %w",
-					agentReq.Spec.GovernedResourceRef.Name, err)
-			}
-		}
-
-		log.FromContext(ctx).Info("Initializing AgentRequest phase", "name", agentReq.Name, "phase", phase)
-		base := agentReq.DeepCopy()
-		agentReq.Status.Phase = phase
-		if phase == governancev1alpha1.PhasePending || phase == governancev1alpha1.PhaseAwaitingVerdict {
-			agentRequestActive.Inc()
-		}
-		agentRequestTotal.WithLabelValues(phase).Inc()
-
-		// Mark as submitted to avoid double auditing if the reconcile is re-triggered
-		// before the phase update is fully visible.
-		meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{
-			Type:    "RequestSubmitted",
-			Status:  metav1.ConditionTrue,
-			Reason:  reason,
-			Message: message,
-		})
-
-		if err := r.Status().Patch(ctx, &agentReq, client.MergeFrom(base)); err != nil {
-			return ctrl.Result{}, err
-		}
-		// Emit initial AuditRecord. We return here so subsequent Reconcile will
-		// enter the state machine with Phase=Pending or Phase=AwaitingVerdict.
-		if err := r.emitAuditRecord(ctx, &agentReq, governancev1alpha1.AuditEventRequestSubmitted, "", phase); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{}, nil
+	if handled, err := r.initializePhase(ctx, &agentReq, reader); handled || err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// 4. State Machine Evaluation
@@ -390,6 +324,88 @@ func (r *AgentRequestReconciler) checkAgentTransitions(ctx context.Context, agen
 	}
 
 	return false, nil
+}
+
+// initializePhase sets the initial Phase on a newly submitted AgentRequest and emits
+// the first AuditRecord. Returns (true, nil) so Reconcile returns immediately;
+// (false, nil) when phase is already set (no-op); (false, err) on transient errors.
+func (r *AgentRequestReconciler) initializePhase(
+	ctx context.Context,
+	agentReq *governancev1alpha1.AgentRequest,
+	reader client.Reader,
+) (bool, error) {
+	if agentReq.Status.Phase != "" || meta.IsStatusConditionTrue(agentReq.Status.Conditions, "RequestSubmitted") {
+		return false, nil
+	}
+
+	// Observe-mode requests are recorded as observations only; they skip
+	// SafetyPolicy eval, OpsLock, and human approval and are immediately terminal.
+	if agentReq.Spec.Mode == governancev1alpha1.ModeObserve {
+		log.FromContext(ctx).Info("Initializing AgentRequest phase", "name", agentReq.Name, "phase", governancev1alpha1.PhaseObserved, "mode", governancev1alpha1.ModeObserve)
+		agentRequestTotal.WithLabelValues(governancev1alpha1.PhaseObserved).Inc()
+		base := agentReq.DeepCopy()
+		agentReq.Status.Phase = governancev1alpha1.PhaseObserved
+		meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{
+			Type:    "RequestSubmitted",
+			Status:  metav1.ConditionTrue,
+			Reason:  "ObserveMode",
+			Message: "Request recorded as observation; governance lifecycle skipped",
+		})
+		if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
+			return false, err
+		}
+		if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventRequestObserved, "", governancev1alpha1.PhaseObserved); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	phase := governancev1alpha1.PhasePending
+	reason := "Initialization"
+	message := "Initial phase set to Pending"
+
+	// Gateway trust gate: Observer/Advisor levels cannot execute; route directly to
+	// AwaitingVerdict so a human reviewer can grade the request.
+	if agentReq.Annotations[governancev1alpha1.AnnotationCanExecute] == "false" {
+		phase = governancev1alpha1.PhaseAwaitingVerdict
+		reason = "TrustGateBlock"
+		message = "Agent trust level does not permit execution; routing to AwaitingVerdict"
+	} else if agentReq.Spec.GovernedResourceRef != nil {
+		var gr governancev1alpha1.GovernedResource
+		if err := reader.Get(ctx, types.NamespacedName{Name: agentReq.Spec.GovernedResourceRef.Name}, &gr); err == nil {
+			if gr.Spec.SoakMode {
+				phase = governancev1alpha1.PhaseAwaitingVerdict
+				reason = "SoakModeAdmission"
+				message = "Initial phase set to AwaitingVerdict due to GovernedResource SoakMode"
+			}
+		} else if !errors.IsNotFound(err) {
+			return false, fmt.Errorf("fetching GovernedResource %s: %w",
+				agentReq.Spec.GovernedResourceRef.Name, err)
+		}
+	}
+
+	log.FromContext(ctx).Info("Initializing AgentRequest phase", "name", agentReq.Name, "phase", phase)
+	base := agentReq.DeepCopy()
+	agentReq.Status.Phase = phase
+	if phase == governancev1alpha1.PhasePending || phase == governancev1alpha1.PhaseAwaitingVerdict {
+		agentRequestActive.Inc()
+	}
+	agentRequestTotal.WithLabelValues(phase).Inc()
+
+	meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{
+		Type:    "RequestSubmitted",
+		Status:  metav1.ConditionTrue,
+		Reason:  reason,
+		Message: message,
+	})
+
+	if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
+		return false, err
+	}
+	if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventRequestSubmitted, "", phase); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func generateLeaseName(targetURI string) string {
@@ -638,6 +654,18 @@ func (r *AgentRequestReconciler) handleEvaluationResult(ctx context.Context, age
 		})
 
 	case governancev1alpha1.ResultRequireApproval:
+		// Trusted/Autonomous agents (via gateway trust gate) skip human approval.
+		if agentReq.Annotations[governancev1alpha1.AnnotationRequiresHumanApproval] == "false" {
+			logger.Info("Auto-approving AgentRequest via trust gate", "name", agentReq.Name, "trustLevel", agentReq.Annotations[governancev1alpha1.AnnotationEffectiveTrustLevel])
+			if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
+				logger.Error(err, "Failed to update Status with evaluation results")
+				return ctrl.Result{}, err
+			}
+			if err := r.Create(ctx, policyEvalAudit); err != nil {
+				logger.Error(err, "Failed to create policy.evaluated AuditRecord")
+			}
+			return ctrl.Result{}, nil
+		}
 		meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{
 			Type:    governancev1alpha1.ConditionRequiresApproval,
 			Status:  metav1.ConditionTrue,

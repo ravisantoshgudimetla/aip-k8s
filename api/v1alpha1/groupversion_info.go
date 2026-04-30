@@ -34,3 +34,18 @@ var (
 	// AddToScheme adds the types in this group-version to the given scheme.
 	AddToScheme = SchemeBuilder.AddToScheme
 )
+
+// Annotation keys set by the gateway trust gate and consumed by the controller.
+const (
+	// AnnotationEffectiveTrustLevel is set by the gateway to indicate the agent's
+	// effective trust level after applying the resource's maxAutonomyLevel ceiling.
+	AnnotationEffectiveTrustLevel = "governance.aip.io/effective-trust-level"
+
+	// AnnotationRequiresHumanApproval is set by the gateway to indicate whether
+	// the agent's request requires human approval based on its trust level.
+	AnnotationRequiresHumanApproval = "governance.aip.io/requires-human-approval"
+
+	// AnnotationCanExecute is set by the gateway to indicate whether the agent's
+	// trust level permits execution of the request.
+	AnnotationCanExecute = "governance.aip.io/can-execute"
+)

@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"sync"
 
 	"github.com/gobwas/glob"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/agent-control-plane/aip-k8s/api/v1alpha1"
 )
@@ -13,6 +17,13 @@ var (
 	globCache = make(map[string]glob.Glob)
 	globMu    sync.RWMutex
 )
+
+// trustGateResult holds the outcome of a trust level evaluation.
+type trustGateResult struct {
+	rejected    bool
+	message     string
+	annotations map[string]string
+}
 
 // matchGovernedResource returns the most specific GovernedResource whose URIPattern
 // matches targetURI using gobwas/glob semantics (** crosses separators, * does not).
@@ -50,4 +61,92 @@ func matchGovernedResource(items []v1alpha1.GovernedResource, targetURI string) 
 		}
 	}
 	return best
+}
+
+// evaluateTrustGate checks the agent's trust level against the GovernedResource's
+// trust requirements. Returns a trustGateResult indicating whether the request
+// should be rejected and what annotations to apply.
+func (s *Server) evaluateTrustGate(
+	ctx context.Context, ns, agentIdentity, mode string,
+	gr *v1alpha1.GovernedResource,
+) (trustGateResult, error) {
+	tr := gr.Spec.TrustRequirements
+	if tr == nil {
+		return trustGateResult{}, nil
+	}
+
+	// Observer-mode requests bypass the trust floor check.
+	if mode == v1alpha1.ModeObserve {
+		return trustGateResult{}, nil
+	}
+
+	// Fetch the agent's trust profile.
+	profileName := summaryNameForAgent(agentIdentity)
+	var profile v1alpha1.AgentTrustProfile
+	if err := s.client.Get(ctx, types.NamespacedName{Name: profileName, Namespace: ns}, &profile); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return trustGateResult{}, fmt.Errorf("getting AgentTrustProfile %s: %w", profileName, err)
+		}
+		// Profile not found — treat as Observer.
+		profile.Status.TrustLevel = v1alpha1.TrustLevelObserver
+	}
+
+	effectiveLevel := profile.Status.TrustLevel
+	if effectiveLevel == "" {
+		effectiveLevel = v1alpha1.TrustLevelObserver
+	}
+
+	// Check minimum trust level.
+	effRank, _ := v1alpha1.TrustLevelRank(effectiveLevel)
+	minRank, _ := v1alpha1.TrustLevelRank(tr.MinTrustLevel)
+	if effRank < minRank {
+		return trustGateResult{
+			rejected: true,
+			message:  "agent trust level " + effectiveLevel + " does not meet resource minimum " + tr.MinTrustLevel,
+		}, nil
+	}
+
+	// Compute effective autonomy = min(agent level, maxAutonomyLevel).
+	effectiveAutonomy := effectiveLevel
+	maxRank, _ := v1alpha1.TrustLevelRank(tr.MaxAutonomyLevel)
+	if effRank > maxRank {
+		effectiveAutonomy = tr.MaxAutonomyLevel
+	}
+
+	// Fetch the graduation policy to determine if human approval is required.
+	var policy v1alpha1.AgentGraduationPolicy
+	requiresApproval := true // fail-closed default
+	canExecute := false      // fail-closed default
+	if err := s.client.Get(ctx, types.NamespacedName{Name: "default", Namespace: ns}, &policy); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return trustGateResult{}, fmt.Errorf("getting AgentGraduationPolicy default: %w", err)
+		}
+		// No policy found — use fail-closed defaults.
+	} else {
+		for _, level := range policy.Spec.Levels {
+			if level.Name == effectiveAutonomy {
+				canExecute = level.CanExecute
+				requiresApproval = level.RequiresHumanApproval
+				break
+			}
+		}
+	}
+
+	annotations := map[string]string{
+		v1alpha1.AnnotationEffectiveTrustLevel: effectiveAutonomy,
+	}
+	if !canExecute {
+		annotations[v1alpha1.AnnotationCanExecute] = boolToStr(false)
+	} else {
+		annotations[v1alpha1.AnnotationRequiresHumanApproval] = boolToStr(requiresApproval)
+	}
+
+	return trustGateResult{annotations: annotations}, nil
+}
+
+func boolToStr(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }

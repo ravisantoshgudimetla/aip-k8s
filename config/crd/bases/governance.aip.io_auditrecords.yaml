@@ -96,6 +96,7 @@ spec:
                 - heartbeat.timeout
                 - state.drifted
                 - state.drifted.verify
+                - agent.trustprofile.updated
                 type: string
               lockStatus:
                 description: Lock state at the time of the event

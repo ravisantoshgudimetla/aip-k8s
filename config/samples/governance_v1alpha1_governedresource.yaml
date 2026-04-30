@@ -1,0 +1,39 @@
+apiVersion: governance.aip.io/v1alpha1
+kind: GovernedResource
+metadata:
+  # GovernedResource is cluster-scoped — no namespace.
+  name: karpenter-nodepools
+spec:
+  # Glob pattern matched against AgentRequest.spec.target.uri.
+  # ** crosses path separators; * does not.
+  uriPattern: "k8s://prod/karpenter/nodepool/*"
+
+  # Only these action strings are accepted. Requests with other actions are
+  # rejected at admission before any trust gate evaluation.
+  permittedActions:
+    - scale-up
+    - scale-down
+
+  # Optional: restrict to specific agent identities. Empty means any
+  # authenticated agent may target this resource.
+  permittedAgents:
+    - karpenter-nodepool-agent
+
+  # Populates live cluster state for reviewers on the dashboard.
+  contextFetcher: karpenter
+
+  description: "Karpenter NodePool scaling. Requires SRE approval at Supervised level."
+
+  # Trust requirements enforce a floor and ceiling on agent autonomy for this
+  # resource, independent of what the AgentGraduationPolicy permits globally.
+  #
+  # minTrustLevel: agents below this level cannot execute against this resource.
+  #   Observer-mode requests (graded but not executed) always bypass this check.
+  #
+  # maxAutonomyLevel: caps the effective autonomy even for highly-trusted agents.
+  #   A Trusted or Autonomous agent is treated as Supervised for this resource,
+  #   meaning human approval is always required for nodepool changes.
+  #   Raise this ceiling only after reviewing the agent's execution history.
+  trustRequirements:
+    minTrustLevel: Supervised
+    maxAutonomyLevel: Supervised

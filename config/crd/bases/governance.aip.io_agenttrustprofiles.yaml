@@ -1,0 +1,127 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: agenttrustprofiles.governance.aip.io
+spec:
+  group: governance.aip.io
+  names:
+    kind: AgentTrustProfile
+    listKind: AgentTrustProfileList
+    plural: agenttrustprofiles
+    singular: agenttrustprofile
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.trustLevel
+      name: TrustLevel
+      type: string
+    - jsonPath: .status.diagnosticAccuracy
+      name: Accuracy
+      priority: 1
+      type: number
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          AgentTrustProfile is the Schema for the agenttrustprofiles API.
+          Controller-managed — created automatically on first graded verdict.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: AgentTrustProfileSpec defines the desired state of AgentTrustProfile.
+            properties:
+              agentIdentity:
+                description: AgentIdentity is the identity of the agent this profile
+                  tracks.
+                minLength: 1
+                type: string
+            required:
+            - agentIdentity
+            type: object
+          status:
+            description: |-
+              AgentTrustProfileStatus defines the observed state of AgentTrustProfile.
+              All fields are set by the controller, never by users.
+            properties:
+              diagnosticAccuracy:
+                description: DiagnosticAccuracy is the all-time accuracy ratio for
+                  this agent.
+                maximum: 1
+                minimum: 0
+                type: number
+              lastDemotedAt:
+                description: LastDemotedAt is the timestamp of the most recent demotion.
+                format: date-time
+                type: string
+              lastEvaluatedAt:
+                description: LastEvaluatedAt is the timestamp of the most recent trust
+                  evaluation.
+                format: date-time
+                type: string
+              lastPromotedAt:
+                description: LastPromotedAt is the timestamp of the most recent promotion.
+                format: date-time
+                type: string
+              recentAccuracy:
+                description: RecentAccuracy is the rolling-window accuracy based on
+                  the evaluation window.
+                maximum: 1
+                minimum: 0
+                type: number
+              successRate:
+                description: SuccessRate is the fraction of executions that reached
+                  Completed.
+                maximum: 1
+                minimum: 0
+                type: number
+              totalExecutions:
+                description: TotalExecutions is the total number of terminal executions
+                  (Completed + Failed).
+                format: int64
+                minimum: 0
+                type: integer
+              totalReviewed:
+                description: TotalReviewed is the total number of graded verdicts
+                  for this agent.
+                format: int64
+                minimum: 0
+                type: integer
+              trustLevel:
+                description: 'TrustLevel is the current trust level: Observer|Advisor|Supervised|Trusted|Autonomous.'
+                enum:
+                - Observer
+                - Advisor
+                - Supervised
+                - Trusted
+                - Autonomous
+                type: string
+            required:
+            - trustLevel
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -177,6 +178,25 @@ admissionPassed:
 		// SoakMode phase initialization is handled exclusively by the controller.
 		// The gateway sets GovernedResourceRef so the controller can detect SoakMode
 		// on its first reconcile and route to PhaseAwaitingVerdict.
+	}
+
+	// Trust gate: enforce trust level requirements from GovernedResource.
+	if matchedGR != nil && matchedGR.Spec.TrustRequirements != nil {
+		trustResult, err := s.evaluateTrustGate(r.Context(), ns, body.AgentIdentity, agentReq.Spec.Mode, matchedGR)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("trust gate error: %v", err))
+			return
+		}
+		if trustResult.rejected {
+			writeError(w, http.StatusForbidden, fmt.Sprintf("INSUFFICIENT_TRUST: %s", trustResult.message))
+			return
+		}
+		if trustResult.annotations != nil {
+			if agentReq.Annotations == nil {
+				agentReq.Annotations = make(map[string]string)
+			}
+			maps.Copy(agentReq.Annotations, trustResult.annotations)
+		}
 	}
 
 	existing, err := s.checkDuplicate(r.Context(), body.AgentIdentity, body.Action, body.TargetURI, ns)

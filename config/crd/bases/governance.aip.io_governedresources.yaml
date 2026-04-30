@@ -102,6 +102,36 @@ spec:
                   diagnostic quality before allowing real execution.
                   Flip to false when the admin has confidence in the agent.
                 type: boolean
+              trustRequirements:
+                description: TrustRequirements enforces a floor and ceiling on agent
+                  trust level for this resource.
+                properties:
+                  maxAutonomyLevel:
+                    description: |-
+                      MaxAutonomyLevel caps the autonomy of even highly-trusted agents on this resource.
+                      An agent at Trusted with a ceiling of Supervised still requires human approval.
+                    enum:
+                    - Observer
+                    - Advisor
+                    - Supervised
+                    - Trusted
+                    - Autonomous
+                    type: string
+                  minTrustLevel:
+                    description: |-
+                      MinTrustLevel is the minimum trust level required to execute against this resource.
+                      Agents below this level are rejected. Observer-mode requests bypass this check.
+                    enum:
+                    - Observer
+                    - Advisor
+                    - Supervised
+                    - Trusted
+                    - Autonomous
+                    type: string
+                required:
+                - maxAutonomyLevel
+                - minTrustLevel
+                type: object
               uriPattern:
                 description: |-
                   URIPattern is a glob pattern matched against AgentRequest.spec.target.uri.
