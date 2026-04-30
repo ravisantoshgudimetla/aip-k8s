@@ -28,6 +28,7 @@ type AgentGraduationPolicySpec struct {
 	// AwaitingVerdictTTL is the duration after which ungraded requests expire.
 	// e.g. "168h" for 7 days.
 	// +optional
+	// +kubebuilder:validation:Pattern="^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
 	AwaitingVerdictTTL string `json:"awaitingVerdictTTL,omitempty"`
 
 	// Levels defines the graduation levels and their requirements.
@@ -40,12 +41,14 @@ type AgentGraduationPolicySpec struct {
 // EvaluationWindow defines how many recent verdicts drive trust evaluation.
 type EvaluationWindow struct {
 	// Count is the number of recent verdicts to consider.
+	// +kubebuilder:validation:Minimum=1
 	Count int64 `json:"count"`
 }
 
 // GraduationLevel defines the requirements and permissions for a trust level.
 type GraduationLevel struct {
 	// Name is the level name: Observer|Advisor|Supervised|Trusted|Autonomous.
+	// +kubebuilder:validation:Enum=Observer;Advisor;Supervised;Trusted;Autonomous
 	Name string `json:"name"`
 
 	// CanExecute indicates whether agents at this level may execute actions.
@@ -67,14 +70,20 @@ type GraduationLevel struct {
 // AccuracyBand defines the accuracy thresholds for a graduation level.
 type AccuracyBand struct {
 	// Min is the minimum accuracy required for this level.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1
 	// +optional
 	Min *float64 `json:"min,omitempty"`
 
 	// Max is the maximum accuracy for this level (upper bound).
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1
 	// +optional
 	Max *float64 `json:"max,omitempty"`
 
 	// DemotionBuffer is the margin below min that triggers demotion.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1
 	// +optional
 	DemotionBuffer *float64 `json:"demotionBuffer,omitempty"`
 }
@@ -82,10 +91,12 @@ type AccuracyBand struct {
 // ExecutionBand defines the execution count thresholds for a graduation level.
 type ExecutionBand struct {
 	// Min is the minimum executions required for this level.
+	// +kubebuilder:validation:Minimum=0
 	// +optional
 	Min *int64 `json:"min,omitempty"`
 
 	// Max is the maximum executions for this level (upper bound).
+	// +kubebuilder:validation:Minimum=0
 	// +optional
 	Max *int64 `json:"max,omitempty"`
 }
@@ -93,20 +104,32 @@ type ExecutionBand struct {
 // DemotionPolicy defines when an agent should be demoted.
 type DemotionPolicy struct {
 	// AccuracyDropThreshold is the accuracy drop that triggers demotion.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1
 	AccuracyDropThreshold float64 `json:"accuracyDropThreshold"`
 
 	// WindowSize is the number of recent verdicts to check for demotion.
+	// +kubebuilder:validation:Minimum=1
 	WindowSize int64 `json:"windowSize"`
 
 	// GracePeriod is the duration an agent is permitted to stay at its current
 	// level after falling below thresholds before demotion is applied.
 	// e.g. "24h".
 	// +optional
+	// +kubebuilder:validation:Pattern="^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
 	GracePeriod string `json:"gracePeriod,omitempty"`
 }
 
+// AgentGraduationPolicyStatus defines the observed state of AgentGraduationPolicy.
+type AgentGraduationPolicyStatus struct {
+	// Conditions hold the latest available observations of the AgentGraduationPolicy's state.
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
 // +kubebuilder:object:root=true
-// +kubebuilder:resource:scope=Cluster
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Namespaced
 // +kubebuilder:printcolumn:name="Window",type=integer,JSONPath=`.spec.evaluationWindow.count`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
@@ -116,7 +139,8 @@ type AgentGraduationPolicy struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec AgentGraduationPolicySpec `json:"spec,omitempty"`
+	Spec   AgentGraduationPolicySpec   `json:"spec,omitempty"`
+	Status AgentGraduationPolicyStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true

@@ -68,6 +68,8 @@ spec:
               diagnosticAccuracy:
                 description: DiagnosticAccuracy is the all-time accuracy ratio for
                   this agent.
+                maximum: 1
+                minimum: 0
                 type: number
               lastDemotedAt:
                 description: LastDemotedAt is the timestamp of the most recent demotion.
@@ -85,20 +87,26 @@ spec:
               recentAccuracy:
                 description: RecentAccuracy is the rolling-window accuracy based on
                   the evaluation window.
+                maximum: 1
+                minimum: 0
                 type: number
               successRate:
                 description: SuccessRate is the fraction of executions that reached
                   Completed.
+                maximum: 1
+                minimum: 0
                 type: number
               totalExecutions:
                 description: TotalExecutions is the total number of terminal executions
                   (Completed + Failed).
                 format: int64
+                minimum: 0
                 type: integer
               totalReviewed:
                 description: TotalReviewed is the total number of graded verdicts
                   for this agent.
                 format: int64
+                minimum: 0
                 type: integer
               trustLevel:
                 description: 'TrustLevel is the current trust level: Observer|Advisor|Supervised|Trusted|Autonomous.'

@@ -101,18 +101,23 @@ func patch(url string, body any) (map[string]any, int, error) {
 	return out, resp.StatusCode, nil
 }
 
-func getPhase(gateway, ns, name string) string {
+func getPhase(gateway, ns, name string) (string, error) {
 	resp, err := httpClient.Get(fmt.Sprintf("%s/agent-requests/%s?namespace=%s", gateway, name, ns))
 	if err != nil {
-		return ""
+		return "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	var out map[string]any
-	_ = json.NewDecoder(resp.Body).Decode(&out)
-	if p, ok := out["phase"].(string); ok {
-		return p
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("bad status: %d", resp.StatusCode)
 	}
-	return ""
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	if p, ok := out["phase"].(string); ok {
+		return p, nil
+	}
+	return "", fmt.Errorf("phase not found")
 }
 
 // ── Trust profile lookup ───────────────────────────────────────────────────────
@@ -138,21 +143,24 @@ func sanitizeDNS(s string, maxLen int) string {
 	return result
 }
 
-func getTrustLevel(ns string) string {
+func getTrustLevel(ns string) (string, error) {
 	name := profileName(agentID)
 	out, err := exec.Command("kubectl", "get", "agenttrustprofile", name,
 		"-n", ns, "--ignore-not-found",
 		"-o", "jsonpath={.status.trustLevel}").Output()
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return strings.TrimSpace(string(out))
+	return strings.TrimSpace(string(out)), nil
 }
 
 func waitForLevel(ns, target string) {
 	fmt.Printf("%s  ⏳ Waiting for trust profile to reach %s...%s\n", dim, target, reset)
 	for {
-		level := getTrustLevel(ns)
+		level, err := getTrustLevel(ns)
+		if err != nil {
+			log.Fatalf("getTrustLevel: %v", err)
+		}
 		if level == target {
 			return
 		}
@@ -178,7 +186,11 @@ func pollUntil(gateway, ns, name string, want ...string) {
 		set[t] = true
 	}
 	for {
-		if set[getPhase(gateway, ns, name)] {
+		phase, err := getPhase(gateway, ns, name)
+		if err != nil {
+			log.Fatalf("getPhase %s: %v", name, err)
+		}
+		if set[phase] {
 			return
 		}
 		time.Sleep(500 * time.Millisecond)

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -121,7 +122,7 @@ func (r *AgentTrustProfileReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	// Read the graduation policy.
 	var policy governancev1alpha1.AgentGraduationPolicy
-	policyNN := types.NamespacedName{Name: defaultGraduationPolicyName}
+	policyNN := types.NamespacedName{Name: defaultGraduationPolicyName, Namespace: ns}
 	levelFound := true
 	if err := r.Get(ctx, policyNN, &policy); err != nil {
 		if !errors.IsNotFound(err) {
@@ -165,11 +166,15 @@ func (r *AgentTrustProfileReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// Guard demotions behind grace period and accuracy-band threshold.
 	// Promotions are always applied immediately.
 	demoted := false
-	if levelFound && governancev1alpha1.TrustLevelOrder[newLevel] < governancev1alpha1.TrustLevelOrder[oldLevel] {
-		if r.checkDemotion(&profile, oldLevel, recentAccuracy, policy) {
-			demoted = true
-		} else {
-			newLevel = oldLevel // grace period active — hold at current level
+	if levelFound {
+		newRank, _ := governancev1alpha1.TrustLevelRank(newLevel)
+		oldRank, _ := governancev1alpha1.TrustLevelRank(oldLevel)
+		if newRank < oldRank {
+			if r.checkDemotion(&profile, oldLevel, recentAccuracy, policy) {
+				demoted = true
+			} else {
+				newLevel = oldLevel // grace period active — hold at current level
+			}
 		}
 	}
 
@@ -185,7 +190,9 @@ func (r *AgentTrustProfileReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	profile.Status.LastEvaluatedAt = &now
 
 	if newLevel != oldLevel {
-		if governancev1alpha1.TrustLevelOrder[newLevel] > governancev1alpha1.TrustLevelOrder[oldLevel] {
+		newRank, _ := governancev1alpha1.TrustLevelRank(newLevel)
+		oldRank, _ := governancev1alpha1.TrustLevelRank(oldLevel)
+		if newRank > oldRank {
 			profile.Status.LastPromotedAt = &now
 		} else {
 			profile.Status.LastDemotedAt = &now
@@ -293,9 +300,14 @@ func (r *AgentTrustProfileReconciler) countTerminalExecutions(ctx context.Contex
 	for _, ar := range list.Items {
 		if ar.Status.Phase == governancev1alpha1.PhaseCompleted ||
 			ar.Status.Phase == governancev1alpha1.PhaseFailed {
-			total++
-			if ar.Status.Phase == governancev1alpha1.PhaseCompleted {
-				completed++
+
+			// Only count requests that actually reached the Executing state
+			// (excludes Observer/AwaitingVerdict grading-only requests)
+			if meta.IsStatusConditionTrue(ar.Status.Conditions, governancev1alpha1.ConditionExecuting) {
+				total++
+				if ar.Status.Phase == governancev1alpha1.PhaseCompleted {
+					completed++
+				}
 			}
 		}
 	}
@@ -467,6 +479,28 @@ func (r *AgentTrustProfileReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				}}
 			}),
 			builder.WithPredicates(arPredicate),
+		).
+		Watches(&governancev1alpha1.AgentGraduationPolicy{},
+			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+				// The policy name must be "default".
+				if obj.GetName() != defaultGraduationPolicyName {
+					return nil
+				}
+				var profiles governancev1alpha1.AgentTrustProfileList
+				if err := mgr.GetClient().List(ctx, &profiles, client.InNamespace(obj.GetNamespace())); err != nil {
+					return nil
+				}
+				var reqs []reconcile.Request
+				for _, p := range profiles.Items {
+					reqs = append(reqs, reconcile.Request{
+						NamespacedName: types.NamespacedName{
+							Name:      p.Name,
+							Namespace: p.Namespace,
+						},
+					})
+				}
+				return reqs
+			}),
 		).
 		Named("agenttrustprofile").
 		Complete(r)

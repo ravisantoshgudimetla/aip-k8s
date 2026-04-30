@@ -24,6 +24,7 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -42,17 +43,36 @@ var _ = Describe("AgentTrustProfile Controller", Ordered, func() {
 	// It is created once in BeforeAll and deleted in AfterAll.
 	// GracePeriod is "1h" so that we can test both the in-grace and out-of-grace paths
 	// purely by controlling profile.Status.LastPromotedAt relative to fixedTestTime.
-	var testPolicy *governancev1alpha1.AgentGraduationPolicy
+	// newReconciler returns a fresh AgentTrustProfileReconciler backed by the
+	// global k8sClient (direct, uncached). The injected clock always returns
+	// fixedTestTime for deterministic grace-period assertions.
+	newReconciler := func() *AgentTrustProfileReconciler {
+		return &AgentTrustProfileReconciler{
+			Client:    k8sClient,
+			APIReader: k8sClient,
+			Scheme:    k8sClient.Scheme(),
+			Clock:     func() time.Time { return fixedTestTime },
+		}
+	}
 
-	BeforeAll(func() {
-		testPolicy = &governancev1alpha1.AgentGraduationPolicy{
+	// createNamespace creates a uniquely named namespace and registers cleanup.
+	createNamespace := func(prefix string) string {
+		ns := prefix + fmt.Sprintf("-%d", time.Now().UnixNano())
+		Expect(k8sClient.Create(ctx, &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: ns},
+		})).To(Succeed())
+
+		// Create a test policy in the new namespace
+		nsPolicy := &governancev1alpha1.AgentGraduationPolicy{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: "default",
+				Name:      "default",
+				Namespace: ns,
 			},
 			Spec: governancev1alpha1.AgentGraduationPolicySpec{
 				EvaluationWindow: governancev1alpha1.EvaluationWindow{Count: 5},
 				DemotionPolicy: governancev1alpha1.DemotionPolicy{
 					GracePeriod: "1h",
+					WindowSize:  10,
 				},
 				Levels: []governancev1alpha1.GraduationLevel{
 					{
@@ -76,9 +96,6 @@ var _ = Describe("AgentTrustProfile Controller", Ordered, func() {
 						Accuracy: &governancev1alpha1.AccuracyBand{
 							Min:            ptr.To(0.8),
 							DemotionBuffer: ptr.To(0.05),
-						},
-						Executions: &governancev1alpha1.ExecutionBand{
-							Min: ptr.To(int64(2)),
 						},
 					},
 					{
@@ -108,35 +125,10 @@ var _ = Describe("AgentTrustProfile Controller", Ordered, func() {
 				},
 			},
 		}
-		err := k8sClient.Create(ctx, testPolicy)
-		if err != nil && !errors.IsAlreadyExists(err) {
-			Expect(err).NotTo(HaveOccurred())
-		}
-	})
+		Expect(k8sClient.Create(ctx, nsPolicy)).To(Succeed())
 
-	AfterAll(func() {
-		_ = k8sClient.Delete(ctx, testPolicy)
-	})
-
-	// newReconciler returns a fresh AgentTrustProfileReconciler backed by the
-	// global k8sClient (direct, uncached). The injected clock always returns
-	// fixedTestTime for deterministic grace-period assertions.
-	newReconciler := func() *AgentTrustProfileReconciler {
-		return &AgentTrustProfileReconciler{
-			Client:    k8sClient,
-			APIReader: k8sClient,
-			Scheme:    k8sClient.Scheme(),
-			Clock:     func() time.Time { return fixedTestTime },
-		}
-	}
-
-	// createNamespace creates a uniquely named namespace and registers cleanup.
-	createNamespace := func(prefix string) string {
-		ns := prefix + fmt.Sprintf("-%d", time.Now().UnixNano())
-		Expect(k8sClient.Create(ctx, &corev1.Namespace{
-			ObjectMeta: metav1.ObjectMeta{Name: ns},
-		})).To(Succeed())
 		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, nsPolicy)
 			_ = k8sClient.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
 		})
 		return ns
@@ -183,6 +175,11 @@ var _ = Describe("AgentTrustProfile Controller", Ordered, func() {
 		Expect(k8sClient.Create(ctx, ar)).To(Succeed())
 		base := ar.DeepCopy()
 		ar.Status.Phase = governancev1alpha1.PhaseCompleted
+		meta.SetStatusCondition(&ar.Status.Conditions, metav1.Condition{
+			Type:   governancev1alpha1.ConditionExecuting,
+			Status: metav1.ConditionTrue,
+			Reason: "TestExecution",
+		})
 		Expect(k8sClient.Status().Patch(ctx, ar, client.MergeFrom(base))).To(Succeed())
 	}
 

@@ -35,22 +35,30 @@ type AgentTrustProfileStatus struct {
 	TrustLevel string `json:"trustLevel"`
 
 	// DiagnosticAccuracy is the all-time accuracy ratio for this agent.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1
 	// +optional
 	DiagnosticAccuracy *float64 `json:"diagnosticAccuracy,omitempty"`
 
 	// RecentAccuracy is the rolling-window accuracy based on the evaluation window.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1
 	// +optional
 	RecentAccuracy *float64 `json:"recentAccuracy,omitempty"`
 
 	// TotalReviewed is the total number of graded verdicts for this agent.
+	// +kubebuilder:validation:Minimum=0
 	// +optional
 	TotalReviewed int64 `json:"totalReviewed,omitempty"`
 
 	// TotalExecutions is the total number of terminal executions (Completed + Failed).
+	// +kubebuilder:validation:Minimum=0
 	// +optional
 	TotalExecutions int64 `json:"totalExecutions,omitempty"`
 
 	// SuccessRate is the fraction of executions that reached Completed.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1
 	// +optional
 	SuccessRate *float64 `json:"successRate,omitempty"`
 

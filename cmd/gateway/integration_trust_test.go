@@ -12,6 +12,7 @@ import (
 
 	"github.com/agent-control-plane/aip-k8s/api/v1alpha1"
 	"github.com/onsi/gomega"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -45,10 +46,10 @@ func trustTestCleanup(ctx context.Context, c client.Client) {
 // Only Trusted and Autonomous have RequiresHumanApproval=false.
 func createTrustTestPolicy(ctx context.Context, gm *gomega.WithT, c client.Client) *v1alpha1.AgentGraduationPolicy {
 	pol := &v1alpha1.AgentGraduationPolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: testDefaultNS},
 		Spec: v1alpha1.AgentGraduationPolicySpec{
 			EvaluationWindow: v1alpha1.EvaluationWindow{Count: 5},
-			DemotionPolicy:   v1alpha1.DemotionPolicy{},
+			DemotionPolicy:   v1alpha1.DemotionPolicy{WindowSize: 1},
 			Levels: []v1alpha1.GraduationLevel{
 				{Name: v1alpha1.TrustLevelObserver, CanExecute: false, RequiresHumanApproval: true},
 				{
@@ -57,13 +58,11 @@ func createTrustTestPolicy(ctx context.Context, gm *gomega.WithT, c client.Clien
 				},
 				{
 					Name: v1alpha1.TrustLevelSupervised, CanExecute: true, RequiresHumanApproval: true,
-					Accuracy:   &v1alpha1.AccuracyBand{Min: ptr.To(0.8), DemotionBuffer: ptr.To(0.05)},
-					Executions: &v1alpha1.ExecutionBand{Min: ptr.To(int64(2))},
+					Accuracy: &v1alpha1.AccuracyBand{Min: ptr.To(0.8), DemotionBuffer: ptr.To(0.05)},
 				},
 				{
 					Name: v1alpha1.TrustLevelTrusted, CanExecute: true, RequiresHumanApproval: false,
-					Accuracy:   &v1alpha1.AccuracyBand{Min: ptr.To(0.9), DemotionBuffer: ptr.To(0.05)},
-					Executions: &v1alpha1.ExecutionBand{Min: ptr.To(int64(5))},
+					Accuracy: &v1alpha1.AccuracyBand{Min: ptr.To(0.9), DemotionBuffer: ptr.To(0.05)},
 				},
 				{
 					Name: v1alpha1.TrustLevelAutonomous, CanExecute: true, RequiresHumanApproval: false,
@@ -177,9 +176,13 @@ func setProfileLevel(
 			return latest.Status.Phase
 		}, eventuallyTimeout, eventuallyInterval).ShouldNot(gomega.BeEmpty())
 
-		base := latest.DeepCopy()
 		latest.Status.Phase = v1alpha1.PhaseCompleted
-		gm.Expect(directClient.Status().Patch(ctx, &latest, client.MergeFrom(base))).To(gomega.Succeed())
+		meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
+			Type:   v1alpha1.ConditionExecuting,
+			Status: metav1.ConditionTrue,
+			Reason: "TestExecution",
+		})
+		gm.Expect(directClient.Status().Update(ctx, &latest)).To(gomega.Succeed())
 	}
 
 	// Wait for all backing data to be visible in the informer cache. The reconciler uses

@@ -178,13 +178,23 @@ const (
 	TrustLevelAutonomous = "Autonomous"
 )
 
-// TrustLevelOrder maps trust levels to their ordinal position for comparison.
-var TrustLevelOrder = map[string]int{
+// trustLevelOrder maps trust levels to their ordinal position for comparison.
+var trustLevelOrder = map[string]int{
 	TrustLevelObserver:   0,
 	TrustLevelAdvisor:    1,
 	TrustLevelSupervised: 2,
 	TrustLevelTrusted:    3,
 	TrustLevelAutonomous: 4,
+}
+
+// TrustLevelRank returns the rank of a trust level for comparison.
+// It returns -1 and false if the level is unknown.
+func TrustLevelRank(level string) (int, bool) {
+	rank, ok := trustLevelOrder[level]
+	if !ok {
+		return -1, false
+	}
+	return rank, true
 }
 
 // Condition types

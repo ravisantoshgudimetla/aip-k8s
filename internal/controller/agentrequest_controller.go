@@ -664,7 +664,7 @@ func (r *AgentRequestReconciler) handleEvaluationResult(ctx context.Context, age
 			if err := r.Create(ctx, policyEvalAudit); err != nil {
 				logger.Error(err, "Failed to create policy.evaluated AuditRecord")
 			}
-			return r.handleLockAcquisition(ctx, agentReq, fromPhase)
+			return ctrl.Result{}, nil
 		}
 		meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{
 			Type:    governancev1alpha1.ConditionRequiresApproval,

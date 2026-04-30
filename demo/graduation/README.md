@@ -4,7 +4,7 @@ A self-running demo that takes an agent from **Observer** to **Autonomous** thro
 all five AIP trust levels, showing how each level changes what the control plane does
 with the agent's requests.
 
-```
+```text
 Observer → Advisor → Supervised → Trusted → Autonomous
 ```
 

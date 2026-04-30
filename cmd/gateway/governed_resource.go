@@ -97,7 +97,9 @@ func (s *Server) evaluateTrustGate(
 	}
 
 	// Check minimum trust level.
-	if v1alpha1.TrustLevelOrder[effectiveLevel] < v1alpha1.TrustLevelOrder[tr.MinTrustLevel] {
+	effRank, _ := v1alpha1.TrustLevelRank(effectiveLevel)
+	minRank, _ := v1alpha1.TrustLevelRank(tr.MinTrustLevel)
+	if effRank < minRank {
 		return trustGateResult{
 			rejected: true,
 			message:  "agent trust level " + effectiveLevel + " does not meet resource minimum " + tr.MinTrustLevel,
@@ -106,7 +108,8 @@ func (s *Server) evaluateTrustGate(
 
 	// Compute effective autonomy = min(agent level, maxAutonomyLevel).
 	effectiveAutonomy := effectiveLevel
-	if v1alpha1.TrustLevelOrder[effectiveLevel] > v1alpha1.TrustLevelOrder[tr.MaxAutonomyLevel] {
+	maxRank, _ := v1alpha1.TrustLevelRank(tr.MaxAutonomyLevel)
+	if effRank > maxRank {
 		effectiveAutonomy = tr.MaxAutonomyLevel
 	}
 
@@ -114,7 +117,7 @@ func (s *Server) evaluateTrustGate(
 	var policy v1alpha1.AgentGraduationPolicy
 	requiresApproval := true // fail-closed default
 	canExecute := false      // fail-closed default
-	if err := s.client.Get(ctx, types.NamespacedName{Name: "default"}, &policy); err != nil {
+	if err := s.client.Get(ctx, types.NamespacedName{Name: "default", Namespace: ns}, &policy); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return trustGateResult{}, fmt.Errorf("getting AgentGraduationPolicy default: %w", err)
 		}

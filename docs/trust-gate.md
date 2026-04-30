@@ -48,7 +48,7 @@ kubectl get agenttrustprofiles -n production
 When a request arrives at `POST /agent-requests`, the gateway runs the trust gate
 before creating the `AgentRequest` object:
 
-```
+```text
 1. Match GovernedResource by URIPattern
 2. If GovernedResource has no trustRequirements → skip trust gate
 3. If request mode == "observe" → skip trust gate (grading, no action taken)
