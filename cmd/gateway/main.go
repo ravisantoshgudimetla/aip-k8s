@@ -141,6 +141,8 @@ func main() {
 	mux.HandleFunc("PATCH /agent-diagnostics/{name}/status", server.handlePatchAgentDiagnosticStatus)
 	mux.HandleFunc("POST /agent-diagnostics/recompute-accuracy", server.handleRecomputeAccuracy)
 	mux.HandleFunc("GET /diagnostic-accuracy-summaries", server.handleListAccuracySummaries)
+	mux.HandleFunc("GET /agent-trust-profiles", server.handleListAgentTrustProfiles)
+	mux.HandleFunc("GET /agent-trust-profiles/{name}", server.handleGetAgentTrustProfile)
 	mux.HandleFunc("POST /governed-resources", server.handleCreateGovernedResource)
 	mux.HandleFunc("GET /governed-resources", server.handleListGovernedResources)
 	mux.HandleFunc("GET /governed-resources/{name}", server.handleGetGovernedResource)

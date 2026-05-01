@@ -188,9 +188,14 @@ only after reviewing the agent's execution history for that resource type.
 `AgentTrustProfile` is created and updated automatically by the controller when the
 first graded verdict lands for an agent. You do not create it manually.
 
-The profile name is a stable hash of the agent identity — use `kubectl get` to observe it:
+The profile name is a stable hash of the agent identity. You can read it via the gateway API or `kubectl`:
 
 ```bash
+# Via gateway API (agents see only their own profile; admins/reviewers see all)
+curl -s http://localhost:8080/agent-trust-profiles?namespace=<namespace> \
+  -H "Authorization: Bearer $AGENT_TOKEN"
+
+# Via kubectl
 kubectl get agenttrustprofiles -n <namespace>
 # NAME                               TRUSTLEVEL   AGE
 # karpenter-nodepool-agent-a1b2c3d4  Trusted      14d
@@ -239,15 +244,15 @@ This is intentional:
 | `GovernedResource` | Gateway API (POST / GET / PUT / DELETE) | `kubectl patch` / `delete` | Use gateway API for normal CRUD. `kubectl` only for force-delete or finalizer manipulation. |
 | `SafetyPolicy` | Gateway API (POST / GET / PUT / DELETE) | `kubectl patch` / `delete` | Use gateway API for normal CRUD. `kubectl` only for break-glass. |
 | `AgentGraduationPolicy` | — | `kubectl apply` / `get` | No gateway endpoint yet. Read by gateway directly from K8s API during admission. |
-| `AgentTrustProfile` | — | `kubectl get` / `describe` | Controller-managed; read-only for humans. |
+| `AgentTrustProfile` | Gateway API (GET list / GET by name) | `kubectl get` / `describe` | Controller-managed; gateway provides read-only access. Agents see only their own profile. |
 | `DiagnosticAccuracySummary` | — | `kubectl get` | Controller-managed; purely informational. |
 | `AuditRecord` | — | `kubectl get` | Immutable events; gateway only writes. |
 
 > **UX note:** `GovernedResource` and `SafetyPolicy` should be managed through the
 > gateway API. Dropping to `kubectl` for these is a break-glass operation only.
-> `AgentGraduationPolicy`, `AgentTrustProfile`, and `AuditRecord` have no gateway
-> endpoints yet — use `kubectl` for those. Gateway read-only endpoints for trust
-> objects are on the roadmap.
+> `AgentGraduationPolicy` and `AuditRecord` have no gateway endpoints yet — use
+> `kubectl` for those. Gateway read-only endpoints for `AgentGraduationPolicy` are
+> on the roadmap.
 
 ---
 
