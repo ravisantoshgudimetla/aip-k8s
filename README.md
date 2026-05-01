@@ -7,6 +7,8 @@ AIP is an open standard designed to govern autonomous AI agents interacting with
 
 This repository contains the `governance.aip.io` controller, which serves as the core authority for evaluating and approving AI agent operations across a Kubernetes cluster.
 
+**Documentation**: [agent-control-plane.github.io/aip-k8s](https://agent-control-plane.github.io/aip-k8s/)
+
 ### Core APIs
 - **AgentRequest**: The primary CRD agents create to request mutating actions on infrastructure.
 - **GovernedResource**: Platform engineering declares which resource types agents may mutate, which agent identities may target them, and which context fetcher to invoke. Requests targeting unregistered resource types are rejected at admission. See [`docs/governed-resources.md`](docs/governed-resources.md).

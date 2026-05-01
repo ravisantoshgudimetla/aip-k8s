@@ -384,3 +384,13 @@ chart-e2e: ## Install Helm chart and run chart e2e tests (images must already be
 	  [ -f $(CHART_PF_GW_PID) ]   && kill $$(cat $(CHART_PF_GW_PID))   2>/dev/null; rm -f $(CHART_PF_GW_PID); \
 	  [ -f $(CHART_PF_DASH_PID) ] && kill $$(cat $(CHART_PF_DASH_PID)) 2>/dev/null; rm -f $(CHART_PF_DASH_PID); \
 	  exit $$EXIT
+
+.PHONY: docs-build
+docs-build: ## Build the MkDocs site locally.
+	@python3 -c "import mkdocs" 2>/dev/null || { echo "mkdocs not installed. Run: pip3 install -r docs/requirements.txt"; exit 1; }
+	python3 -m mkdocs build --strict
+
+.PHONY: docs-serve
+docs-serve: ## Serve the MkDocs site locally for development.
+	@python3 -c "import mkdocs" 2>/dev/null || { echo "mkdocs not installed. Run: pip3 install -r docs/requirements.txt"; exit 1; }
+	python3 -m mkdocs serve
