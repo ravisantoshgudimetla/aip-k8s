@@ -88,6 +88,7 @@ jobs:
           go test -v -tags=e2e ./test/e2e/... \
             -ginkgo.v -ginkgo.focus "Chart"
         env:
+          HELM_DEPLOYED: "true"
           GATEWAY_URL: http://localhost:${{ env.GW_PORT }}
           DASHBOARD_URL: http://localhost:${{ env.DASH_PORT }}
           IMAGE_TAG: ${{ steps.tag.outputs.sha }}
