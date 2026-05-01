@@ -155,6 +155,11 @@ func main() {
 	mux.HandleFunc("GET /safety-policies/{name}", server.handleGetSafetyPolicy)
 	mux.HandleFunc("PUT /safety-policies/{name}", server.handleReplaceSafetyPolicy)
 	mux.HandleFunc("DELETE /safety-policies/{name}", server.handleDeleteSafetyPolicy)
+	mux.HandleFunc("POST /agent-graduation-policies", server.handleCreateAgentGraduationPolicy)
+	mux.HandleFunc("GET /agent-graduation-policies", server.handleListAgentGraduationPolicies)
+	mux.HandleFunc("GET /agent-graduation-policies/{name}", server.handleGetAgentGraduationPolicy)
+	mux.HandleFunc("PUT /agent-graduation-policies/{name}", server.handleReplaceAgentGraduationPolicy)
+	mux.HandleFunc("DELETE /agent-graduation-policies/{name}", server.handleDeleteAgentGraduationPolicy)
 
 	var authMiddleware func(http.Handler) http.Handler
 	if *oidcIssuerURL != "" {

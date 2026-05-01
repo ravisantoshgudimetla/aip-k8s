@@ -656,3 +656,26 @@ The join key is `agentIdentity` across all three resources.
 
 The agent creates nothing except `AgentRequest`. Everything else is either admin
 configuration or control plane bookkeeping.
+
+---
+
+## One policy per namespace — environment sensitivity lives in GovernedResource
+
+`AgentGraduationPolicy` defines **agent competence thresholds**, not environment risk.
+An agent that is 90% accurate at diagnosing nodepool pressure is 90% accurate
+whether the target is `dev` or `prod`. The graduation policy should not change
+per environment.
+
+**Environment sensitivity is expressed in `GovernedResource.trustRequirements`:**
+
+| Environment | `minTrustLevel` | `maxAutonomyLevel` | Effect |
+|---|---|---|---|
+| Dev | `Advisor` | `Trusted` | New agents can operate; proven agents auto-approve |
+| Prod | `Trusted` | `Supervised` | Only proven agents can operate; always human approval |
+
+If you need stricter controls in production, raise `minTrustLevel` or lower
+`maxAutonomyLevel` on the production `GovernedResource`. Do not create a
+separate graduation policy per environment.
+
+This separation keeps the mental model simple: **one competence level per agent,
+one risk tolerance per resource**.

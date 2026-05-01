@@ -22,6 +22,7 @@ package e2e
 import (
 	"crypto/sha256"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -67,6 +68,34 @@ var _ = Describe("SoakMode and Accuracy Tracking", Ordered, func() {
 	var grGeneration int64
 
 	BeforeAll(func() {
+		// Ensure controller is deployed and ready (idempotent — other tests may
+		// have already deployed it, but Ginkgo randomises top-level Describe
+		// order so we cannot rely on side effects from e2e_test.go).
+		By("ensuring controller is deployed")
+		if os.Getenv("HELM_DEPLOYED") != "true" {
+			checkCtrlCmd := exec.Command("kubectl", "get", "deployment",
+				"aip-k8s-controller", "-n", "aip-k8s-system")
+			if _, checkErr := utils.Run(checkCtrlCmd); checkErr != nil {
+				deployCmd := exec.Command("make", "deploy",
+					fmt.Sprintf("IMG=%s", managerImage))
+				deployOut, deployErr := deployCmd.CombinedOutput()
+				Expect(deployErr).NotTo(HaveOccurred(), "deploy controller: %s", string(deployOut))
+			}
+		} else {
+			By("skipping make deploy; HELM_DEPLOYED=true")
+		}
+
+		By("waiting for controller to be ready")
+		Eventually(func(g Gomega) {
+			readyCmd := exec.Command("kubectl", "get", "pods",
+				"-l", "control-plane=controller-manager",
+				"-n", "aip-k8s-system",
+				"-o", `jsonpath={.items[0].status.conditions[?(@.type=="Ready")].status}`)
+			status, err := utils.Run(readyCmd)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(status).To(Equal("True"), "controller pod not yet ready")
+		}, 2*time.Minute, 2*time.Second).Should(Succeed())
+
 		By("creating a GovernedResource with soakMode: true")
 		grJSON := fmt.Sprintf(`{
 			"apiVersion": "governance.aip.io/v1alpha1",

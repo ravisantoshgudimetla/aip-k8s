@@ -14,43 +14,22 @@ fail-closed defaults (`canExecute=false`). Without `trustRequirements` on a
 ## Quick start
 
 ```bash
-# 1. Apply the graduation policy (namespace-scoped, name must be "default")
-#    No gateway endpoint yet — use kubectl for now.
-kubectl apply -n <namespace> -f config/samples/governance_v1alpha1_agentgraduationpolicy.yaml
-
-# 2. Create a GovernedResource with trust requirements via the gateway API
-curl -s -X POST http://localhost:8080/governed-resources \
+# 1. Create the graduation policy via the gateway API (namespace-scoped, name must be "default")
+curl -s -X POST http://localhost:8080/agent-graduation-policies?namespace=<namespace> \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "karpenter-nodepool-team-a",
-    "uriPattern": "k8s://prod/karpenter/nodepool/team-a-*",
-    "permittedActions": ["scale-up", "scale-down"],
-    "trustRequirements": {
-      "minTrustLevel": "Observer",
-      "maxAutonomyLevel": "Supervised"
+    "name": "default",
+    "spec": {
+      "evaluationWindow": {"count": 50},
+      "awaitingVerdictTTL": "168h",
+      "levels": [
+        {"name": "Observer", "canExecute": false},
+        {"name": "Advisor", "canExecute": true, "requiresHumanApproval": true, "accuracy": {"min": 0.70, "demotionBuffer": 0.02}, "executions": {"min": 0}}
+      ],
+      "demotionPolicy": {"accuracyDropThreshold": 0.10, "windowSize": 20, "gracePeriod": "24h"}
     }
   }'
-
-# 3. Submit a request as a new agent (Observer level — no profile yet)
-curl -s -X POST http://localhost:8080/agent-requests \
-  -H "Authorization: Bearer $AGENT_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agentIdentity": "karpenter-nodepool-agent",
-    "action": "scale-up",
-    "targetURI": "k8s://prod/karpenter/nodepool/team-a-workers",
-    "reason": "15 pods pending for 8 min, all 10 nodes occupied"
-  }'
-
-# New agents start at Observer. With minTrustLevel=Supervised, the gateway
-# rejects the request immediately:
-# HTTP 403: "agent trust level Observer does not meet resource minimum Supervised"
-
-# 4. Observe trust profile state as the agent earns verdicts
-kubectl get agenttrustprofiles -n production
-# NAME                         TRUSTLEVEL   AGE
-# karpenter-nodepool-agent-…   Advisor      3d
 ```
 
 ---
@@ -220,22 +199,22 @@ kubectl get auditrecords -n <namespace> \
 
 ---
 
-## Why `kubectl` for trust configuration?
+## Why gateway API for configuration?
 
-`AgentGraduationPolicy` and `AgentTrustProfile` are Kubernetes-native resources.
-The gateway reads them directly via the Kubernetes API during request admission
-using the controller-runtime client. There is no separate REST service or cache
-between the gateway and these objects.
+`AgentGraduationPolicy`, `GovernedResource`, and `SafetyPolicy` are
+Kubernetes-native resources, but they are managed through the gateway API for
+normal operations. The gateway reads them directly via the Kubernetes API during
+request admission using the controller-runtime client. There is no separate REST
+service or cache between the gateway and these objects.
 
-This is intentional:
+This design gives you:
 
 - **Single source of truth** — the Kubernetes API is the authority. No cache
   coherence problems, no stale reads, no separate database to manage.
 - **Eventual consistency handled natively** — controller-runtime watches and
   informers keep the gateway's view current automatically.
-- **Created once, read often** — a graduation policy is configured at cluster
-  setup and rarely modified. A trust profile is created and updated entirely by
-  the controller. Neither is part of the day-to-day operator workflow.
+- **Unified management** — create, read, update, and delete policies through the
+  same gateway API that agents use for submitting requests.
 
 ### Resource access patterns
 
@@ -243,16 +222,15 @@ This is intentional:
 |---|---|---|---|
 | `GovernedResource` | Gateway API (POST / GET / PUT / DELETE) | `kubectl patch` / `delete` | Use gateway API for normal CRUD. `kubectl` only for force-delete or finalizer manipulation. |
 | `SafetyPolicy` | Gateway API (POST / GET / PUT / DELETE) | `kubectl patch` / `delete` | Use gateway API for normal CRUD. `kubectl` only for break-glass. |
-| `AgentGraduationPolicy` | — | `kubectl apply` / `get` | No gateway endpoint yet. Read by gateway directly from K8s API during admission. |
+| `AgentGraduationPolicy` | Gateway API (POST / GET / PUT / DELETE) | `kubectl apply` / `get` | Use gateway API for normal CRUD. `kubectl` only for break-glass. |
 | `AgentTrustProfile` | Gateway API (GET list / GET by name) | `kubectl get` / `describe` | Controller-managed; gateway provides read-only access. Agents see only their own profile. |
 | `DiagnosticAccuracySummary` | — | `kubectl get` | Controller-managed; purely informational. |
 | `AuditRecord` | — | `kubectl get` | Immutable events; gateway only writes. |
 
-> **UX note:** `GovernedResource` and `SafetyPolicy` should be managed through the
-> gateway API. Dropping to `kubectl` for these is a break-glass operation only.
-> `AgentGraduationPolicy` and `AuditRecord` have no gateway endpoints yet — use
-> `kubectl` for those. Gateway read-only endpoints for `AgentGraduationPolicy` are
-> on the roadmap.
+> **UX note:** `GovernedResource`, `SafetyPolicy`, and `AgentGraduationPolicy` should
+> be managed through the gateway API. Dropping to `kubectl` for these is a break-glass
+> operation only. `AuditRecord` and `DiagnosticAccuracySummary` have no gateway
+> endpoints — use `kubectl` for those.
 
 ---
 
