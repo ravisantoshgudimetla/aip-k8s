@@ -1,117 +1,69 @@
-# Contributing to aip-k8s
+# Contributing to AIP Kubernetes Control Plane
 
-## Prerequisites
+## Local Development
 
-- Go 1.24+
-- Docker
-- [kind](https://kind.sigs.k8s.io/) (`~/go/bin/kind` or on `$PATH`)
-- [kubectl](https://kubernetes.io/docs/tasks/tools/)
-- [helm](https://helm.sh/docs/intro/install/) (for chart e2e only)
+### Prerequisites
+- `go` version v1.24.0+
+- `docker` version 17.03+
+- `kind` version v0.31.0+ (for local testing)
+- `kubectl` version v1.11.3+
 
-## Local development stack
+### Running Locally (Development in KIND)
 
-Spin up the gateway and dashboard against your active cluster:
+You can automatically spin up a local Kubernetes cluster using `kind` and deploy the `aip-k8s` controller directly to it:
 
-```bash
-make local          # builds binaries, starts gateway (:8080) and dashboard (:8082)
-make local-down     # stops both processes
-make local-clean    # deletes all AIP objects from the cluster
+```sh
+# This will:
+# 1. Create a local 'aip-test' kind cluster (if it doesn't exist)
+# 2. Build the 'aip-controller:test' docker image
+# 3. Load the image into the cluster
+# 4. Generate & apply all CRDs
+# 5. Deploy the controller to the cluster
+make kind-deploy IMG=aip-controller:test
 ```
 
-`make local` uses `~/.kube/config`. Point it at any cluster — the `kind-aip-test`
-cluster created by `make setup-test-e2e` works well.
+### Build and Deploy to a Cluster
 
-## Unit and integration tests
+**Build and push your image:**
 
-```bash
-make test           # envtest-based unit/integration tests (no cluster needed)
-make lint           # golangci-lint
+```sh
+make docker-build docker-push IMG=<some-registry>/aip-k8s:tag
 ```
 
-## Pre-merge e2e tests
+**Install the CRDs and deploy the Manager:**
 
-These tests run Phases 1–7 against a Kind cluster with the controller deployed:
-
-```bash
-make test-e2e       # creates kind cluster, deploys controller, runs all e2e specs
+```sh
+make deploy IMG=<some-registry>/aip-k8s:tag
 ```
 
-Phase 6 (Gateway API tests) and Phase 7 (Gateway OIDC authentication) both build the
-gateway binary as a subprocess automatically — no extra setup needed.
+> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin privileges.
 
-## Chart e2e tests
+## Testing
 
-These tests validate the full Helm chart installation: controller, gateway, and dashboard
-deployed together in-cluster.
+This project uses `envtest` for rapid integration testing without a full cluster:
 
-### Running locally
-
-```bash
-# 1. Build images and load into Kind (one-time, or after code changes)
-make chart-images
-
-# 2. Install the chart and run the chart specs
-make chart-e2e
+```sh
+make test
 ```
 
-`make chart-images` defaults to the `aip-test` Kind cluster and tags images as `local`.
-Override with:
+For end-to-end tests on a Kind cluster:
 
-```bash
-make chart-images CHART_KIND_CLUSTER=my-cluster CHART_IMAGE_TAG=dev
-make chart-e2e    CHART_IMAGE_TAG=dev
+```sh
+make test-e2e
 ```
 
-`make chart-e2e` handles helm install, port-forwarding, test execution, and port-forward
-cleanup automatically — including on test failure.
+> **NOTE**: Run `make help` for more information on all potential `make` targets.
 
-### How it works in CI
+## Gateway Development
 
-The `Chart E2E Tests` workflow triggers after `Publish Images` succeeds. It pulls the
-published images from `ghcr.io`, loads them into a fresh Kind cluster, then calls:
+### Starting the gateway locally
 
-```bash
-make chart-e2e CHART_IMAGE_TAG=sha-<short-sha>
+```sh
+# Build
+make build-gateway
+
+# Run locally (uses ~/.kube/config by default)
+./bin/gateway --addr :8080
 ```
 
-### Skipping chart tests in pre-merge runs
-
-The chart specs in `test/e2e/helm_test.go` skip automatically when `GATEWAY_URL` is not
-set, so they are never run during `make test-e2e`.
-
-## CRD changes and the Helm chart
-
-When you add or modify fields in `api/v1alpha1/`, run:
-
-```bash
-make manifests        # regenerates config/crd/bases/ and RBAC from markers
-make generate         # regenerates DeepCopy methods (zz_generated.deepcopy.go)
-make sync-helm-crds   # copies updated CRDs into charts/aip-k8s/crds/
-make helm-crds-check  # verify they match (also runs in CI)
-```
-
-`make generate` must follow `make manifests` — missing it leaves `zz_generated.deepcopy.go`
-stale, which causes subtle runtime bugs or build failures on the next PR.
-
-**Why the manual sync?** Helm's `crds/` directory is only applied on `helm install`,
-not on `helm upgrade`. This is standard Helm behaviour adopted by cert-manager,
-prometheus-operator, and others. Operators must run `kubectl apply --server-side`
-before every upgrade — see [Upgrading](README.md#upgrading) in the README.
-
-Never edit files under `charts/aip-k8s/crds/` by hand — they are generated outputs.
-Always go through `make manifests && make sync-helm-crds`.
-
-## Helm chart publishing
-
-The Helm chart is published to `ghcr.io` as an OCI artifact automatically after every
-merge to `main` (and on tagged releases) by the `Publish Images` workflow. No manual
-steps are needed.
-
-The published chart is available at:
-
-```
-oci://ghcr.io/agent-control-plane/aip-k8s/charts/aip-k8s
-```
-
-To publish a new chart version, bump `version` in `charts/aip-k8s/Chart.yaml` and merge
-to `main`. The workflow packages and pushes the chart with that version tag automatically.
+## All new features must conform to the core AIP specification.

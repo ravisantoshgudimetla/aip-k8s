@@ -68,6 +68,8 @@ extra:
 
 nav:
   - Home: index.md
+  - Reference:
+      - API Reference: api-reference.md
   - Concepts:
       - Agent Graduation Ladder: agent-graduation-ladder.md
       - Trust Gate: trust-gate.md
