@@ -1,0 +1,77 @@
+site_name: AIP Kubernetes Control Plane
+site_description: Documentation for the Agent Intent Protocol Kubernetes Control Plane
+site_url: https://agent-control-plane.github.io/aip-k8s/
+repo_name: agent-control-plane/aip-k8s
+repo_url: https://github.com/agent-control-plane/aip-k8s
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - content.code.copy
+    - content.action.edit
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - search.highlight
+    - search.share
+    - search.suggest
+
+plugins:
+  - search
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - tables
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/agent-control-plane/aip-k8s
+      name: AIP K8s on GitHub
+
+nav:
+  - Home: index.md
+  - Concepts:
+      - Agent Graduation Ladder: agent-graduation-ladder.md
+      - Trust Gate: trust-gate.md
+      - Governed Resources: governed-resources.md
+      - Garbage Collection: garbage-collection.md
+  - Authentication:
+      - OIDC with Keycloak: oidc-keycloak.md

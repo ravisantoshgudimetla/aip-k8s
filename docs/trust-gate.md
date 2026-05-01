@@ -15,10 +15,22 @@ fail-closed defaults (`canExecute=false`). Without `trustRequirements` on a
 
 ```bash
 # 1. Apply the graduation policy (namespace-scoped, name must be "default")
+#    No gateway endpoint yet — use kubectl for now.
 kubectl apply -n <namespace> -f config/samples/governance_v1alpha1_agentgraduationpolicy.yaml
 
-# 2. Apply a GovernedResource with trust requirements
-kubectl apply -n <namespace> -f config/samples/governance_v1alpha1_governedresource.yaml
+# 2. Create a GovernedResource with trust requirements via the gateway API
+curl -s -X POST http://localhost:8080/governed-resources \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "karpenter-nodepool-team-a",
+    "uriPattern": "k8s://prod/karpenter/nodepool/team-a-*",
+    "permittedActions": ["scale-up", "scale-down"],
+    "trustRequirements": {
+      "minTrustLevel": "Observer",
+      "maxAutonomyLevel": "Supervised"
+    }
+  }'
 
 # 3. Submit a request as a new agent (Observer level — no profile yet)
 curl -s -X POST http://localhost:8080/agent-requests \
@@ -203,6 +215,42 @@ kubectl get auditrecords -n <namespace> \
 
 ---
 
+## Why `kubectl` for trust configuration?
+
+`AgentGraduationPolicy` and `AgentTrustProfile` are Kubernetes-native resources.
+The gateway reads them directly via the Kubernetes API during request admission
+using the controller-runtime client. There is no separate REST service or cache
+between the gateway and these objects.
+
+This is intentional:
+
+- **Single source of truth** — the Kubernetes API is the authority. No cache
+  coherence problems, no stale reads, no separate database to manage.
+- **Eventual consistency handled natively** — controller-runtime watches and
+  informers keep the gateway's view current automatically.
+- **Created once, read often** — a graduation policy is configured at cluster
+  setup and rarely modified. A trust profile is created and updated entirely by
+  the controller. Neither is part of the day-to-day operator workflow.
+
+### Resource access patterns
+
+| Resource | Primary path | Break-glass (`kubectl`) | Notes |
+|---|---|---|---|
+| `GovernedResource` | Gateway API (POST / GET / PUT / DELETE) | `kubectl patch` / `delete` | Use gateway API for normal CRUD. `kubectl` only for force-delete or finalizer manipulation. |
+| `SafetyPolicy` | Gateway API (POST / GET / PUT / DELETE) | `kubectl patch` / `delete` | Use gateway API for normal CRUD. `kubectl` only for break-glass. |
+| `AgentGraduationPolicy` | — | `kubectl apply` / `get` | No gateway endpoint yet. Read by gateway directly from K8s API during admission. |
+| `AgentTrustProfile` | — | `kubectl get` / `describe` | Controller-managed; read-only for humans. |
+| `DiagnosticAccuracySummary` | — | `kubectl get` | Controller-managed; purely informational. |
+| `AuditRecord` | — | `kubectl get` | Immutable events; gateway only writes. |
+
+> **UX note:** `GovernedResource` and `SafetyPolicy` should be managed through the
+> gateway API. Dropping to `kubectl` for these is a break-glass operation only.
+> `AgentGraduationPolicy`, `AgentTrustProfile`, and `AuditRecord` have no gateway
+> endpoints yet — use `kubectl` for those. Gateway read-only endpoints for trust
+> objects are on the roadmap.
+
+---
+
 ## Common patterns
 
 ### Soak mode + trust gate together
@@ -234,9 +282,18 @@ only in test environments — in production, let the graduation ladder operate.
 ### Raising the ceiling after proven track record
 
 ```bash
-kubectl patch governedresource karpenter-nodepools \
-  --type=merge \
-  -p '{"spec":{"trustRequirements":{"minTrustLevel":"Supervised","maxAutonomyLevel":"Trusted"}}}'
+curl -s -X PUT http://localhost:8080/governed-resources/karpenter-nodepools \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "karpenter-nodepools",
+    "uriPattern": "github://myorg/infra/files/main/clusters/*/karpenter/**",
+    "permittedActions": ["update"],
+    "trustRequirements": {
+      "minTrustLevel": "Supervised",
+      "maxAutonomyLevel": "Trusted"
+    }
+  }'
 ```
 
 Review the agent's `AuditRecord` history before raising the ceiling:

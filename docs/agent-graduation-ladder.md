@@ -514,6 +514,91 @@ blast radius is bounded by the OpsLock duration (15s in e2e, configurable in pro
 
 ---
 
+## Audit trail: two reviewers, two roles
+
+Every `AgentRequest` carries two distinct identity fields that track different human
+reviewers at different lifecycle stages:
+
+| Field | Populated when | Set by | Meaning |
+|---|---|---|---|
+| `status.humanApproval.approvedBy` | Request is approved or denied for execution | Gateway (from authenticated caller) | The person who decided **whether the action should run** |
+| `status.verdictBy` | Verdict is recorded on a completed or observed request | Gateway (from authenticated caller) | The person who decided **whether the diagnosis was correct** |
+
+These can be — and often are — different people.
+
+### Why two fields instead of one
+
+The questions are different:
+
+- **Approval** asks: *"Should this action be taken?"* It evaluates risk, business
+  context, and operational state. An on-call SRE at 2am may approve a nodepool scale-up
+  because the alert is real, even if the agent's root-cause analysis is slightly off.
+
+- **Verdict** asks: *"Was the agent's diagnosis accurate?"* It evaluates the quality
+  of the agent's reasoning — not whether the action was needed. A senior engineer
+  reviewing the week's requests on Monday morning grades each diagnosis as correct,
+  partial, or incorrect, with no pressure to approve or deny execution.
+
+The separation matters for the graduation model. An agent that gets many actions
+approved may still have poor diagnostic accuracy. The `approvedBy` field answers
+*"who let this through?"* The `verdictBy` field answers *"who graded the homework?"*
+
+### When each field is populated
+
+| Phase / mode | `approvedBy` | `verdictBy` | Notes |
+|---|---|---|---|
+| `Observer` (grading only) | — | reviewer | No action to approve; only verdict |
+| `Advisor` / `Supervised` | approver | reviewer | Both gates fire; can be same person or different |
+| `Trusted` / `Autonomous` | — | reviewer | Auto-approved by policy; no human approver |
+
+In `Observer` mode the agent is not executing anything, so there is no approval gate.
+The only human interaction is the verdict.
+
+In `Trusted` and `Autonomous` mode the policy engine auto-approves the request, so
+`approvedBy` is empty. The verdict still comes from a human reviewer who grades the
+outcome after execution completes.
+
+### How they feed into accuracy and demotion
+
+- **`approvedBy`** does **not** affect accuracy or trust level. It is purely audit.
+  It exists for compliance and post-incident review: *"Who approved the change that
+  caused the incident?"*
+
+- **`verdictBy`** drives the `DiagnosticAccuracySummary` and therefore the
+  `AgentTrustProfile`. Every verdict (correct, partial, incorrect) is counted by
+  the accuracy controller. The `verdictBy` identity is stamped on the `AgentRequest`
+  so reviewers cannot impersonate each other.
+
+### Example: two reviewers on the same request
+
+```yaml
+apiVersion: governance.aip.io/v1alpha1
+kind: AgentRequest
+metadata:
+  name: nodepool-req-047
+  namespace: production
+spec:
+  agentIdentity: karpenter-nodepool-agent
+  action: update
+  target:
+    uri: github://myorg/infra/files/main/clusters/prod/karpenter/gpu-pool.yaml
+status:
+  phase: Completed
+  humanApproval:
+    decision: approved
+    approvedBy: sarah-oncall-sre    # Sarah approved at 02:17 UTC during the incident
+    forGeneration: 3
+  verdict: correct
+  verdictBy: alex-staff-engineer    # Alex graded it correct on Monday review
+  verdictNote: "diagnosis was spot-on — gpu-pool was indeed saturated"
+```
+
+Sarah and Alex are tracked independently. If a post-mortem is needed, `approvedBy`
+points to the on-call responder. If the agent's graduation is questioned,
+`verdictBy` points to the person who validated its reasoning.
+
+---
+
 ## How DiagnosticAccuracySummary feeds AgentTrustProfile
 
 The gateway and controller have a clean separation of responsibilities:

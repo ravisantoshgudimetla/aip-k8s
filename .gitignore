@@ -46,6 +46,10 @@ go.work
 
 # Kubeconfig might contain secrets
 *.kubeconfig
+
+# MkDocs build output
+site/
+
 /dashboard
 cmd/dashboard/dashboard
 demo.tape

@@ -515,6 +515,6 @@ name or ID. Set `--oidc-identity-claim` to that claim name and
 
 ## Next steps
 
-- [Auth0 OIDC setup](./oidc-auth0.md) — managed provider, same gateway flags.
-- [SafetyPolicy reference](../spec.md#safety-policies) — restrict which agents
+- Auth0 OIDC setup — managed provider, same gateway flags (guide coming soon).
+- [SafetyPolicy reference](https://github.com/agent-control-plane/aip-k8s/blob/main/spec.md#safety-policies) — restrict which agents
   can request which actions.
