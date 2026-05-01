@@ -71,6 +71,7 @@ func TestGatewayIntegration(t *testing.T) {
 	runAuthAndApprovalTests(t, mgrClient, directClient, ctx)
 	runSoakModeAndVerdictTests(t, mgrClient, directClient, ctx)
 	runTrustGateTests(t, mgrClient, directClient, ctx)
+	runTrustProfileReadTests(t, mgrClient, directClient, ctx)
 }
 
 func startTestManager(t *testing.T, cfg *rest.Config) client.Client {

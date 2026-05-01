@@ -585,3 +585,81 @@ func runTrustGateTests(t *testing.T, mgrClient, directClient client.Client, ctx 
 			"Trusted agent should be auto-approved after graduation")
 	})
 }
+
+func runTrustProfileReadTests(t *testing.T, _, directClient client.Client, ctx context.Context) {
+	t.Run("GET /agent-trust-profiles lists profiles", func(t *testing.T) {
+		gm := gomega.NewWithT(t)
+		defer func() {
+			_ = directClient.DeleteAllOf(ctx, &v1alpha1.AgentTrustProfile{}, client.InNamespace(testDefaultNS))
+		}()
+
+		profile := &v1alpha1.AgentTrustProfile{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-profile-1",
+				Namespace: testDefaultNS,
+			},
+			Spec: v1alpha1.AgentTrustProfileSpec{
+				AgentIdentity: "agent-tp-1",
+			},
+		}
+		gm.Expect(directClient.Create(ctx, profile)).To(gomega.Succeed())
+
+		// Patch status separately to avoid validation webhook issues
+		orig := profile.DeepCopy()
+		profile.Status.TrustLevel = v1alpha1.TrustLevelAdvisor
+		gm.Expect(directClient.Status().Patch(ctx, profile, client.MergeFrom(orig))).To(gomega.Succeed())
+
+		s := &Server{
+			client:       directClient,
+			dedupWindow:  0,
+			waitTimeout:  serverWaitTimeout,
+			roles:        newRoleConfig("agent-tp-1", "reviewer-tp", "admin-tp", "", "", ""),
+			authRequired: true,
+		}
+
+		req := httptest.NewRequest("GET", "/agent-trust-profiles?namespace="+testDefaultNS, nil)
+		req = req.WithContext(withCallerSub(req.Context(), "admin-tp"))
+		rr := httptest.NewRecorder()
+
+		s.handleListAgentTrustProfiles(rr, req)
+		gm.Expect(rr.Code).To(gomega.Equal(http.StatusOK))
+	})
+
+	t.Run("GET /agent-trust-profiles/{name} returns profile", func(t *testing.T) {
+		gm := gomega.NewWithT(t)
+		defer func() {
+			_ = directClient.DeleteAllOf(ctx, &v1alpha1.AgentTrustProfile{}, client.InNamespace(testDefaultNS))
+		}()
+
+		profile := &v1alpha1.AgentTrustProfile{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-profile-2",
+				Namespace: testDefaultNS,
+			},
+			Spec: v1alpha1.AgentTrustProfileSpec{
+				AgentIdentity: "agent-tp-2",
+			},
+		}
+		gm.Expect(directClient.Create(ctx, profile)).To(gomega.Succeed())
+
+		orig := profile.DeepCopy()
+		profile.Status.TrustLevel = v1alpha1.TrustLevelTrusted
+		gm.Expect(directClient.Status().Patch(ctx, profile, client.MergeFrom(orig))).To(gomega.Succeed())
+
+		s := &Server{
+			client:       directClient,
+			dedupWindow:  0,
+			waitTimeout:  serverWaitTimeout,
+			roles:        newRoleConfig("agent-tp-2", "reviewer-tp", "admin-tp", "", "", ""),
+			authRequired: true,
+		}
+
+		req := httptest.NewRequest("GET", "/agent-trust-profiles/test-profile-2?namespace="+testDefaultNS, nil)
+		req = req.WithContext(withCallerSub(req.Context(), "admin-tp"))
+		req.SetPathValue("name", "test-profile-2")
+		rr := httptest.NewRecorder()
+
+		s.handleGetAgentTrustProfile(rr, req)
+		gm.Expect(rr.Code).To(gomega.Equal(http.StatusOK))
+	})
+}
