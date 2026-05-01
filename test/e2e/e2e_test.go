@@ -56,15 +56,6 @@ const metricsRoleBindingName = "aip-k8s-metrics-binding"
 var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
 
-	// Before running the tests, set up the environment by creating the namespace,
-	// enforcing the restricted security policy, and deploying the controller.
-	// CRDs are installed in BeforeSuite so they are available to all Describe containers.
-	BeforeAll(func() {
-		// Namespace creation, labeling, and controller deployment moved to
-		// BeforeSuite so they run once before any Describe block regardless of
-		// Ginkgo's randomised ordering.
-	})
-
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
 	// and deleting the namespace.
 	// After all tests have been executed, clean up by deleting local test files.
