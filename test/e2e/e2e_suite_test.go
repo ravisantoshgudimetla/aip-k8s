@@ -24,7 +24,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -88,6 +90,42 @@ var _ = BeforeSuite(func() {
 		cmd := exec.Command("make", "install")
 		_, err := utils.Run(cmd)
 		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install CRDs")
+	}
+
+	// Create namespace and deploy controller-manager before any Describe runs.
+	// Ginkgo randomises top-level Describe order, so no test can rely on another
+	// test's BeforeAll having run first.
+	if os.Getenv("HELM_DEPLOYED") != "true" {
+		By("creating manager namespace")
+		cmd := exec.Command("kubectl", "create", "ns", namespace, "--dry-run=client", "-o", "yaml")
+		nsYAML, err := cmd.Output()
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to render namespace manifest")
+		applyCmd := exec.Command("kubectl", "apply", "-f", "-")
+		applyCmd.Stdin = strings.NewReader(string(nsYAML))
+		_, err = utils.Run(applyCmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to create namespace")
+
+		By("labeling the namespace to enforce the restricted security policy")
+		cmd = exec.Command("kubectl", "label", "--overwrite", "ns", namespace,
+			"pod-security.kubernetes.io/enforce=restricted")
+		_, err = utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
+
+		By("deploying the controller-manager")
+		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
+		_, err = utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+		By("waiting for controller to be ready")
+		Eventually(func(g Gomega) {
+			readyCmd := exec.Command("kubectl", "get", "pods",
+				"-l", "control-plane=controller-manager",
+				"-n", namespace,
+				"-o", `jsonpath={.items[0].status.conditions[?(@.type=="Ready")].status}`)
+			status, err := utils.Run(readyCmd)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(status).To(Equal("True"), "controller pod not yet ready")
+		}, 2*time.Minute, 2*time.Second).Should(Succeed())
 	}
 
 	By("setting up typed Kubernetes client for assertions")

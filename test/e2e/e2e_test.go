@@ -60,36 +60,9 @@ var _ = Describe("Manager", Ordered, func() {
 	// enforcing the restricted security policy, and deploying the controller.
 	// CRDs are installed in BeforeSuite so they are available to all Describe containers.
 	BeforeAll(func() {
-		By("creating manager namespace")
-		// Use apply instead of create so this is idempotent: if Phase 6 BeforeAll
-		// ran first (Ginkgo randomises top-level Describe order) it will have
-		// already created the namespace via make deploy.
-		cmd := exec.Command("kubectl", "create", "ns", namespace, "--dry-run=client", "-o", "yaml")
-		nsYAML, err := cmd.Output()
-		Expect(err).NotTo(HaveOccurred(), "Failed to render namespace manifest")
-		applyCmd := exec.Command("kubectl", "apply", "-f", "-")
-		applyCmd.Stdin = strings.NewReader(string(nsYAML))
-		_, err = utils.Run(applyCmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create namespace")
-
-		By("labeling the namespace to enforce the restricted security policy")
-		cmd = exec.Command("kubectl", "label", "--overwrite", "ns", namespace,
-			"pod-security.kubernetes.io/enforce=restricted")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
-
-		By("deploying the controller-manager")
-		if os.Getenv("HELM_DEPLOYED") != "true" {
-			// Always run make deploy so that RBAC and other manifests stay current
-			// (e.g. kubebuilder marker changes in internal/gc/worker.go). kubectl
-			// apply is idempotent — it will not restart the pod unless the pod
-			// template spec actually changes.
-			cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
-		} else {
-			By("skipping make deploy; HELM_DEPLOYED=true")
-		}
+		// Namespace creation, labeling, and controller deployment moved to
+		// BeforeSuite so they run once before any Describe block regardless of
+		// Ginkgo's randomised ordering.
 	})
 
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
