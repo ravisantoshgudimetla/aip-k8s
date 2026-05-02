@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -76,35 +75,8 @@ var _ = Describe("Phase 8: Gateway Keycloak OIDC Integration", Ordered, func() {
 		By("configuring Keycloak realm and clients")
 		kcSetup(kcPort, kcRealm)
 
-		// 5. Ensure controller is deployed (idempotent — Phase 1 may have done this already,
-		// but Ginkgo can randomize Describe block order so we cannot rely on it).
-		By("ensuring controller is deployed")
-		if os.Getenv("HELM_DEPLOYED") != "true" {
-			checkCtrlCmd := exec.Command("kubectl", "get", "deployment",
-				"aip-k8s-controller", "-n", "aip-k8s-system")
-			if _, checkErr := utils.Run(checkCtrlCmd); checkErr != nil {
-				deployCmd := exec.Command("make", "deploy",
-					fmt.Sprintf("IMG=%s", managerImage))
-				deployCmd.Dir = projDir
-				deployOut, deployErr := deployCmd.CombinedOutput()
-				Expect(deployErr).NotTo(HaveOccurred(), "deploy controller: %s", string(deployOut))
-			}
-		} else {
-			By("skipping make deploy; HELM_DEPLOYED=true")
-		}
-
-		By("waiting for controller to be ready")
-		Eventually(func(g Gomega) {
-			readyCmd := exec.Command("kubectl", "get", "pods",
-				"-l", "control-plane=controller-manager",
-				"-n", "aip-k8s-system",
-				"-o", `jsonpath={.items[0].status.conditions[?(@.type=="Ready")].status}`)
-			status, err := utils.Run(readyCmd)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(status).To(Equal("True"), "controller pod not yet ready")
-		}, 2*time.Minute, 2*time.Second).Should(Succeed())
-
-		// 6. Build and start gateway subprocess pointing at Keycloak
+		// Controller is guaranteed by BeforeSuite.
+		// 5. Build and start gateway subprocess pointing at Keycloak
 		By("building gateway binary")
 		binPath := projDir + "/bin/gateway"
 		buildCmd := exec.Command("go", "build", "-o", binPath, projDir+"/cmd/gateway")

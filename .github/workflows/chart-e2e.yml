@@ -96,7 +96,6 @@ jobs:
         run: |
           go test -v -tags=e2e ./test/e2e/... -ginkgo.v
         env:
-          HELM_DEPLOYED: "true"
           KUBECONFIG: ${{ env.KUBECONFIG }}
           GATEWAY_URL: http://localhost:${{ env.GW_PORT }}
           DASHBOARD_URL: http://localhost:${{ env.DASH_PORT }}
