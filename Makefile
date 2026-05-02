@@ -394,3 +394,11 @@ docs-build: ## Build the MkDocs site locally.
 docs-serve: ## Serve the MkDocs site locally for development.
 	@python3 -c "import mkdocs" 2>/dev/null || { echo "mkdocs not installed. Run: pip3 install -r docs/requirements.txt"; exit 1; }
 	python3 -m mkdocs serve
+
+.PHONY: docs-generate
+docs-generate: ## Regenerate docs/api-reference.md from cmd/gateway/main.go.
+	go run scripts/generate-api-docs.go
+
+.PHONY: docs-lint
+docs-lint: ## Fail if docs/api-reference.md is stale vs cmd/gateway/main.go.
+	go run scripts/check-api-docs.go

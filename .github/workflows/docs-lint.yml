@@ -1,0 +1,33 @@
+name: Docs Lint
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'cmd/gateway/main.go'
+      - 'docs/api-reference.md'
+      - 'scripts/generate-api-docs.go'
+      - 'scripts/check-api-docs.go'
+  pull_request:
+    paths:
+      - 'cmd/gateway/main.go'
+      - 'docs/api-reference.md'
+      - 'scripts/generate-api-docs.go'
+      - 'scripts/check-api-docs.go'
+
+jobs:
+  docs-lint:
+    name: Check API docs are up to date
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run docs lint
+        run: make docs-lint
