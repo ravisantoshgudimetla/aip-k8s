@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -54,6 +55,46 @@ var (
 	ctx = context.Background()
 )
 
+// crdsInstalled returns true if all governance CRDs in config/crd/bases/
+// are already present in the cluster. New CRDs are automatically detected.
+func crdsInstalled() bool {
+	projDir, err := utils.GetProjectDir()
+	if err != nil {
+		return false
+	}
+	basesDir := filepath.Join(projDir, "config", "crd", "bases")
+	entries, err := os.ReadDir(basesDir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
+			continue
+		}
+		cmd := exec.Command("kubectl", "get", "-f", filepath.Join(basesDir, entry.Name()))
+		if _, err := utils.Run(cmd); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// controllerDeployed returns true if the controller-manager deployment exists.
+func controllerDeployed() bool {
+	cmd := exec.Command("kubectl", "get", "deployment",
+		controllerDeploymentName, "-n", namespace)
+	_, err := utils.Run(cmd)
+	return err == nil
+}
+
+// helmReleaseExists returns true if the aip-k8s Helm release is present.
+func helmReleaseExists() bool {
+	cmd := exec.Command("helm", "list", "-n", namespace,
+		"-q", "-f", "aip-k8s")
+	out, err := utils.Run(cmd)
+	return err == nil && strings.TrimSpace(out) == "aip-k8s"
+}
+
 // TestE2E runs the e2e test suite to validate the solution in an isolated environment.
 // The default setup requires Kind and CertManager.
 //
@@ -66,8 +107,7 @@ func TestE2E(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	// When GATEWAY_URL is set the suite is running against an already-deployed
-	// Helm release. Skip image build/load and CertManager — everything is in
-	// the cluster already.
+	// release (Helm or otherwise). Skip image build/load and CertManager.
 	if os.Getenv("GATEWAY_URL") == "" {
 		By("building the manager image")
 		cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", managerImage))
@@ -81,21 +121,18 @@ var _ = BeforeSuite(func() {
 		setupCertManager()
 	}
 
-	// Install CRDs before any Describe container runs. Ginkgo randomises top-level
-	// Describe order, so tests that use governance CRDs cannot rely on the Manager
-	// BeforeAll to have run first. HELM_DEPLOYED=true skips this because Helm
-	// already installs CRDs during chart deployment.
-	if os.Getenv("HELM_DEPLOYED") != "true" {
+	// Install CRDs if they are not already present. Works regardless of whether
+	// the cluster was prepared via make install, Helm, or any other method.
+	if !crdsInstalled() {
 		By("installing CRDs")
 		cmd := exec.Command("make", "install")
 		_, err := utils.Run(cmd)
 		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install CRDs")
 	}
 
-	// Create namespace and deploy controller-manager before any Describe runs.
-	// Ginkgo randomises top-level Describe order, so no test can rely on another
-	// test's BeforeAll having run first.
-	if os.Getenv("HELM_DEPLOYED") != "true" {
+	// Create namespace and deploy controller-manager if not already present.
+	// Works regardless of deployment method (Kustomize, Helm, etc.).
+	if !controllerDeployed() {
 		By("creating manager namespace")
 		cmd := exec.Command("kubectl", "create", "ns", namespace, "--dry-run=client", "-o", "yaml")
 		nsYAML, err := cmd.Output()
@@ -115,18 +152,20 @@ var _ = BeforeSuite(func() {
 		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
 		_, err = utils.Run(cmd)
 		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
-
-		By("waiting for controller to be ready")
-		Eventually(func(g Gomega) {
-			readyCmd := exec.Command("kubectl", "get", "pods",
-				"-l", "control-plane=controller-manager",
-				"-n", namespace,
-				"-o", `jsonpath={.items[0].status.conditions[?(@.type=="Ready")].status}`)
-			status, err := utils.Run(readyCmd)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(status).To(Equal("True"), "controller pod not yet ready")
-		}, 2*time.Minute, 2*time.Second).Should(Succeed())
 	}
+
+	// Always wait for controller readiness — even if it was already deployed,
+	// we need to be sure it is Ready before any test runs.
+	By("waiting for controller to be ready")
+	Eventually(func(g Gomega) {
+		readyCmd := exec.Command("kubectl", "get", "pods",
+			"-l", "control-plane=controller-manager",
+			"-n", namespace,
+			"-o", `jsonpath={.items[0].status.conditions[?(@.type=="Ready")].status}`)
+		status, err := utils.Run(readyCmd)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(status).To(Equal("True"), "controller pod not yet ready")
+	}, 2*time.Minute, 2*time.Second).Should(Succeed())
 
 	By("setting up typed Kubernetes client for assertions")
 	scheme := runtime.NewScheme()

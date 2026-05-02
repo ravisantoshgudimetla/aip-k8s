@@ -27,7 +27,7 @@ var _ = Describe("AgentRequest GC", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred(), "failed to get project dir")
 
 		By("ensuring governance CRDs are installed")
-		if os.Getenv("HELM_DEPLOYED") != "true" {
+		if !crdsInstalled() {
 			cmd := exec.Command("make", "install")
 			cmd.Dir = projDir
 			out, err := cmd.CombinedOutput()
@@ -35,15 +35,11 @@ var _ = Describe("AgentRequest GC", Ordered, func() {
 		}
 
 		By("deploying the controller-manager")
-		if os.Getenv("HELM_DEPLOYED") != "true" {
-			checkCmd := exec.Command("kubectl", "get", "deployment",
-				controllerDeploymentName, "-n", "aip-k8s-system")
-			if _, checkErr := utils.Run(checkCmd); checkErr != nil {
-				cmd := exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
-				cmd.Dir = projDir
-				out, err := cmd.CombinedOutput()
-				Expect(err).NotTo(HaveOccurred(), "failed to deploy controller-manager: %s", string(out))
-			}
+		if !controllerDeployed() {
+			cmd := exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
+			cmd.Dir = projDir
+			out, err := cmd.CombinedOutput()
+			Expect(err).NotTo(HaveOccurred(), "failed to deploy controller-manager: %s", string(out))
 		}
 
 		By("waiting for controller-manager to be ready")
@@ -60,7 +56,7 @@ var _ = Describe("AgentRequest GC", Ordered, func() {
 		By("enabling GC on the controller-manager for this test")
 		// GC is off by default in e2e to avoid interfering with other tests that
 		// create terminal AgentRequests. Enable it here and restore it in AfterAll.
-		if os.Getenv("HELM_DEPLOYED") == "true" {
+		if helmReleaseExists() {
 			imageTag := os.Getenv("IMAGE_TAG")
 			_, err = utils.Run(exec.Command("helm", "upgrade", "aip-k8s", "charts/aip-k8s/",
 				"-n", "aip-k8s-system",
@@ -114,7 +110,7 @@ var _ = Describe("AgentRequest GC", Ordered, func() {
 		_, _ = utils.Run(cmd)
 
 		By("restoring controller-manager to GC-disabled state")
-		if os.Getenv("HELM_DEPLOYED") == "true" {
+		if helmReleaseExists() {
 			imageTag := os.Getenv("IMAGE_TAG")
 			_, _ = utils.Run(exec.Command("helm", "upgrade", "aip-k8s", "charts/aip-k8s/",
 				"-n", "aip-k8s-system",

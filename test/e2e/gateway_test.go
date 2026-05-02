@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -59,55 +58,12 @@ var _ = Describe("Phase 6: Gateway API", Ordered, func() {
 		binPath := projDir + "/bin/gateway"
 		cmdPath := projDir + "/cmd/gateway"
 
-		var cmd *exec.Cmd
-		var out []byte
-
-		By("ensuring governance CRDs are installed")
-		if os.Getenv("HELM_DEPLOYED") != "true" {
-			cmd = exec.Command("make", "install")
-			cmd.Dir = projDir
-			out, err = cmd.CombinedOutput()
-			Expect(err).NotTo(HaveOccurred(), "failed to install CRDs: %s", string(out))
-		} else {
-			By("skipping make install; HELM_DEPLOYED=true")
-		}
-
-		// Deploy the controller only when it is not already running.
-		// In the full suite (make test-e2e) the Manager BeforeAll deploys it first;
-		// calling make deploy again would re-create the aip-k8s-system namespace
-		// and conflict with Manager's own kubectl create ns. In the chart-e2e
-		// workflow the images are loaded under ghcr.io tags, not managerImage, so
-		// make deploy would pull a non-existent image and fail. Skip make deploy
-		// when HELM_DEPLOYED=true (chart already deployed the controller).
-		By("ensuring controller is deployed (skips if already running)")
-		if os.Getenv("HELM_DEPLOYED") != "true" {
-			checkCmd := exec.Command("kubectl", "get", "deployment",
-				"aip-k8s-controller", "-n", "aip-k8s-system")
-			if _, checkErr := utils.Run(checkCmd); checkErr != nil {
-				cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
-				cmd.Dir = projDir
-				out, err = cmd.CombinedOutput()
-				Expect(err).NotTo(HaveOccurred(), "failed to deploy controller: %s", string(out))
-			}
-		} else {
-			By("skipping make deploy; HELM_DEPLOYED=true")
-		}
-
-		By("waiting for controller-manager to be ready")
-		Eventually(func(g Gomega) {
-			readyCmd := exec.Command("kubectl", "get", "pods",
-				"-l", "control-plane=controller-manager",
-				"-n", "aip-k8s-system",
-				"-o", `jsonpath={.items[0].status.conditions[?(@.type=="Ready")].status}`)
-			status, err := utils.Run(readyCmd)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(status).To(Equal("True"), "controller-manager pod not yet ready")
-		}, 2*time.Minute, 2*time.Second).Should(Succeed())
-
+		// Controller and CRDs are guaranteed by BeforeSuite. We only need to
+		// build and start the gateway subprocess for this test.
 		By("building the gateway binary")
-		cmd = exec.Command("go", "build", "-o", binPath, cmdPath)
+		cmd := exec.Command("go", "build", "-o", binPath, cmdPath)
 		cmd.Dir = projDir
-		out, err = cmd.CombinedOutput()
+		out, err := cmd.CombinedOutput()
 		Expect(err).NotTo(HaveOccurred(), "failed to build gateway: %s", string(out))
 
 		By("starting the gateway subprocess")
