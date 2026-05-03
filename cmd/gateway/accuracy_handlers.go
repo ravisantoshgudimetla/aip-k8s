@@ -97,14 +97,14 @@ func (s *Server) applyVerdictToSummary(ctx context.Context, ns, agentId, oldVerd
 
 // recomputeAccuracyForAgent rebuilds DiagnosticAccuracySummary for the given
 // agent (pass agentId="" to rebuild all agents) by scanning every reviewed
-// AgentDiagnostic in ns. It is safe to call from a goroutine with
+// AgentRequest in ns. It is safe to call from a goroutine with
 // context.Background() when the originating HTTP request has already returned.
 //
 //nolint:gocyclo // function scans and rebuilds accuracy summaries; complexity is inherent
 func (s *Server) recomputeAccuracyForAgent(ctx context.Context, ns, agentId string) error {
-	var list v1alpha1.AgentDiagnosticList
+	var list v1alpha1.AgentRequestList
 	if err := s.client.List(ctx, &list, client.InNamespace(ns)); err != nil {
-		return fmt.Errorf("list diagnostics: %w", err)
+		return fmt.Errorf("list agent requests: %w", err)
 	}
 
 	stats := make(map[string]*v1alpha1.DiagnosticAccuracySummary)
@@ -137,9 +137,9 @@ func (s *Server) recomputeAccuracyForAgent(ctx context.Context, ns, agentId stri
 		}
 		summary.Status.TotalReviewed++
 
-		reviewedAt := item.Status.ReviewedAt
-		if summary.Status.LastUpdatedAt == nil || (reviewedAt != nil && reviewedAt.After(summary.Status.LastUpdatedAt.Time)) {
-			summary.Status.LastUpdatedAt = reviewedAt
+		verdictAt := item.Status.VerdictAt
+		if summary.Status.LastUpdatedAt == nil || (verdictAt != nil && verdictAt.After(summary.Status.LastUpdatedAt.Time)) {
+			summary.Status.LastUpdatedAt = verdictAt
 		}
 	}
 

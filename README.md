@@ -16,7 +16,6 @@ This repository contains the `governance.aip.io` controller, which serves as the
 - **GovernedResource**: Platform engineering declares which resource types agents may mutate, which agent identities may target them, and which context fetcher to invoke. Requests targeting unregistered resource types are rejected at admission.
 - **SafetyPolicy**: CEL-based rules defined by administrators to govern which agents can perform what actions. Binds to `GovernedResource` objects via `governedResourceSelector`.
 - **AuditRecord**: Immutable event logs generated on every state transition of an AgentRequest.
-- **AgentDiagnostic**: Agent-written, immutable records of observations and diagnoses made before acting. No controller involved — agents write directly.
 - **AgentTrustProfile**: Per-agent measured accuracy and trust level, computed from graded verdicts on `AwaitingVerdict` requests.
 - **AgentGraduationPolicy**: Namespace-wide thresholds that define when an agent's measured accuracy qualifies it for higher autonomy levels.
 

@@ -375,15 +375,4 @@ func runSoakModeAndVerdictTests(t *testing.T, mgrClient, directClient client.Cli
 		gm.Expect(rr.Code).To(gomega.Equal(http.StatusBadRequest))
 	})
 
-	t.Run("AgentDiagnostic create returns 410", func(t *testing.T) {
-		gm := gomega.NewWithT(t)
-		s := &Server{}
-		req := httptest.NewRequest("POST", "/agent-diagnostics", nil)
-		rr := httptest.NewRecorder()
-		s.handleCreateAgentDiagnostic(rr, req)
-		gm.Expect(rr.Code).To(gomega.Equal(http.StatusGone))
-		var respBody map[string]string
-		gm.Expect(json.Unmarshal(rr.Body.Bytes(), &respBody)).To(gomega.Succeed())
-		gm.Expect(respBody["error"]).To(gomega.ContainSubstring("deprecated"))
-	})
 }

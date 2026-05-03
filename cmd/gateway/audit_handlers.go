@@ -10,7 +10,6 @@ import (
 	"github.com/agent-control-plane/aip-k8s/api/v1alpha1"
 )
 
-//nolint:dupl // similar to handleListAgentDiagnostics
 func (s *Server) handleListAuditRecords(w http.ResponseWriter, r *http.Request) {
 	sub := callerSubFromCtx(r.Context())
 	if s.authRequired && sub == "" {

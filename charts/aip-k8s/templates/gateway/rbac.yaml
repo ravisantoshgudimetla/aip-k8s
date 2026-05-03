@@ -20,8 +20,6 @@ rules:
   - agentrequests
   - agentrequests/status
   - auditrecords
-  - agentdiagnostics
-  - agentdiagnostics/status
   - diagnosticaccuracysummaries
   - diagnosticaccuracysummaries/status
   - governedresources
