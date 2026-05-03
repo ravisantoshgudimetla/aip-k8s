@@ -23,6 +23,7 @@ func runAuthAndApprovalTests(t *testing.T, mgrClient, directClient client.Client
 		gm := gomega.NewWithT(t)
 		s := &Server{
 			client:       mgrClient,
+			apiReader:    mgrClient,
 			dedupWindow:  0,
 			waitTimeout:  serverWaitTimeout,
 			roles:        newRoleConfig("", "", "", "", "", ""),
@@ -83,6 +84,7 @@ func runAuthAndApprovalTests(t *testing.T, mgrClient, directClient client.Client
 		gm := gomega.NewWithT(t)
 		s := &Server{
 			client:       mgrClient,
+			apiReader:    mgrClient,
 			dedupWindow:  0,
 			waitTimeout:  2 * time.Second,
 			roles:        newRoleConfig(testAgentSub, testReviewerSub, "", "", "", ""),
@@ -110,7 +112,8 @@ func runAuthAndApprovalTests(t *testing.T, mgrClient, directClient client.Client
 	t.Run("GET /agent-requests/{name} - returns current state", func(t *testing.T) {
 		gm := gomega.NewWithT(t)
 		s := &Server{
-			client: mgrClient,
+			client:    mgrClient,
+			apiReader: mgrClient,
 		}
 
 		ar := &v1alpha1.AgentRequest{
@@ -160,6 +163,7 @@ func runHumanDecisionTests(t *testing.T, mgrClient, directClient client.Client, 
 		gm := gomega.NewWithT(t)
 		s := &Server{
 			client:       mgrClient,
+			apiReader:    mgrClient,
 			dedupWindow:  0,
 			waitTimeout:  serverWaitTimeout,
 			roles:        newRoleConfig(testAgentSub, testReviewerSub, "", "", "", ""),
@@ -198,6 +202,7 @@ func runHumanDecisionTests(t *testing.T, mgrClient, directClient client.Client, 
 		gm := gomega.NewWithT(t)
 		s := &Server{
 			client:       mgrClient,
+			apiReader:    mgrClient,
 			dedupWindow:  0,
 			waitTimeout:  serverWaitTimeout,
 			roles:        newRoleConfig(testAgentSub, testReviewerSub, "", "", "", ""),
@@ -237,6 +242,7 @@ func runAuditTests(t *testing.T, mgrClient, directClient client.Client, ctx cont
 		gm := gomega.NewWithT(t)
 		s := &Server{
 			client:       mgrClient,
+			apiReader:    mgrClient,
 			dedupWindow:  0,
 			waitTimeout:  serverWaitTimeout,
 			roles:        newRoleConfig("", "", "", "", "", ""),

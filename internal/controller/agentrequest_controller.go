@@ -102,6 +102,16 @@ func (r *AgentRequestReconciler) now() time.Time {
 	return time.Now()
 }
 
+// deterministicAuditName generates a stable, DNS-compliant name for an AuditRecord
+// based on its identity. This allows AlreadyExists to fire correctly on retry,
+// preventing duplicate records when the first Create succeeds server-side but the
+// response is lost.
+func deterministicAuditName(agentReqName, eventType string, ts time.Time) string {
+	input := agentReqName + "|" + eventType + "|" + ts.Format(time.RFC3339Nano)
+	hash := sha256.Sum256([]byte(input))
+	return fmt.Sprintf("%x", hash)[:53]
+}
+
 const defaultOpsLockDuration = 5 * time.Minute
 
 func (r *AgentRequestReconciler) opsLockDurationOrDefault() time.Duration {
@@ -549,14 +559,16 @@ func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, agentReq 
 		policyEvalLabels["aip.io/correlationID"] = corrID
 	}
 
+	now := r.now()
+
 	policyEvalAudit := &governancev1alpha1.AuditRecord{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: agentReq.Name + "-audit-",
-			Namespace:    agentReq.Namespace,
-			Labels:       policyEvalLabels,
+			Name:      deterministicAuditName(agentReq.Name, governancev1alpha1.AuditEventPolicyEvaluated, now),
+			Namespace: agentReq.Namespace,
+			Labels:    policyEvalLabels,
 		},
 		Spec: governancev1alpha1.AuditRecordSpec{
-			Timestamp:         metav1.NewTime(r.now()),
+			Timestamp:         metav1.NewTime(now),
 			AgentIdentity:     agentReq.Spec.AgentIdentity,
 			AgentRequestRef:   agentReq.Name,
 			Event:             governancev1alpha1.AuditEventPolicyEvaluated,
@@ -1078,14 +1090,16 @@ func (r *AgentRequestReconciler) emitAuditRecord(ctx context.Context, req *gover
 		auditLabels["aip.io/correlationID"] = corrID
 	}
 
+	now := r.now()
+
 	audit := &governancev1alpha1.AuditRecord{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: req.Name + "-audit-",
-			Namespace:    req.Namespace,
-			Labels:       auditLabels,
+			Name:      deterministicAuditName(req.Name, eventType, now),
+			Namespace: req.Namespace,
+			Labels:    auditLabels,
 		},
 		Spec: governancev1alpha1.AuditRecordSpec{
-			Timestamp:       metav1.NewTime(r.now()),
+			Timestamp:       metav1.NewTime(now),
 			AgentIdentity:   req.Spec.AgentIdentity,
 			AgentRequestRef: req.Name,
 			Event:           eventType,

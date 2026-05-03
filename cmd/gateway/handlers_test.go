@@ -39,6 +39,7 @@ func newTestServer(objs ...client.Object) *Server {
 		Build()
 	return &Server{
 		client:       fc,
+		apiReader:    fc,
 		dedupWindow:  0,
 		waitTimeout:  90 * time.Second,
 		roles:        newRoleConfig("agent-sub", "reviewer-sub", "", "", "", ""),
@@ -149,6 +150,7 @@ func TestExecutingByNonCreatorRejected(t *testing.T) {
 		WithStatusSubresource(&v1alpha1.AgentRequest{}).Build()
 	s := &Server{
 		client:       fc,
+		apiReader:    fc,
 		dedupWindow:  0,
 		roles:        newRoleConfig("agent-sub,other-agent", "reviewer-sub", "", "", "", ""),
 		authRequired: true,
@@ -178,6 +180,7 @@ func TestCompletedByNonCreatorRejected(t *testing.T) {
 		WithStatusSubresource(&v1alpha1.AgentRequest{}).Build()
 	s := &Server{
 		client:       fc,
+		apiReader:    fc,
 		dedupWindow:  0,
 		roles:        newRoleConfig("agent-sub,other-agent", "reviewer-sub", "", "", "", ""),
 		authRequired: true,

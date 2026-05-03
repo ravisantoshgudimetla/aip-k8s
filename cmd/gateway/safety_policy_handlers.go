@@ -184,5 +184,19 @@ func (s *Server) handleDeleteSafetyPolicy(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+
+	// Kubernetes sets deletionTimestamp and returns 202 when finalizers are present;
+	// the actual removal happens after the controller clears them. Check whether
+	// the object is still terminating so callers get the correct status code.
+	var check v1alpha1.SafetyPolicy
+	if getErr := s.apiReader.Get(r.Context(), types.NamespacedName{Namespace: ns, Name: name}, &check); getErr != nil {
+		if apierrors.IsNotFound(getErr) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, getErr.Error())
+		return
+	}
+	// Object still exists — finalizers are blocking final removal.
+	w.WriteHeader(http.StatusAccepted)
 }

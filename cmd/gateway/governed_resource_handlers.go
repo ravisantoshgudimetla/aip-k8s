@@ -181,7 +181,7 @@ func (s *Server) handleDeleteGovernedResource(w http.ResponseWriter, r *http.Req
 	// the actual removal happens after the controller clears them. Check whether
 	// the object is still terminating so callers get the correct status code.
 	var check v1alpha1.GovernedResource
-	if getErr := s.client.Get(r.Context(), types.NamespacedName{Name: name}, &check); getErr != nil {
+	if getErr := s.apiReader.Get(r.Context(), types.NamespacedName{Name: name}, &check); getErr != nil {
 		if apierrors.IsNotFound(getErr) {
 			w.WriteHeader(http.StatusNoContent)
 			return

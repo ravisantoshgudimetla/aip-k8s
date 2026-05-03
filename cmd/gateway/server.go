@@ -59,6 +59,7 @@ var terminalPhases = map[string]bool{
 
 type Server struct {
 	client                  client.Client
+	apiReader               client.Reader
 	watchClient             client.WithWatch
 	dedupWindow             time.Duration
 	waitTimeout             time.Duration

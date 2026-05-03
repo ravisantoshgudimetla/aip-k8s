@@ -21,6 +21,7 @@ func runRequestLifecycleTests(t *testing.T, mgrClient, directClient client.Clien
 		gm := gomega.NewWithT(t)
 		s := &Server{
 			client:       directClient,
+			apiReader:    directClient,
 			dedupWindow:  0,
 			waitTimeout:  serverWaitTimeout,
 			roles:        newRoleConfig("", "", "", "", "", ""),
@@ -62,6 +63,7 @@ func runRequestLifecycleTests(t *testing.T, mgrClient, directClient client.Clien
 		gm := gomega.NewWithT(t)
 		s := &Server{
 			client:       mgrClient,
+			apiReader:    mgrClient,
 			dedupWindow:  24 * time.Hour,
 			waitTimeout:  serverWaitTimeout,
 			roles:        newRoleConfig("", "", "", "", "", ""),
@@ -123,6 +125,7 @@ func runRequestLifecycleTests(t *testing.T, mgrClient, directClient client.Clien
 		gm := gomega.NewWithT(t)
 		s := &Server{
 			client:       mgrClient,
+			apiReader:    mgrClient,
 			dedupWindow:  100 * time.Millisecond,
 			waitTimeout:  1 * time.Second,
 			roles:        newRoleConfig("", "", "", "", "", ""),
@@ -159,6 +162,7 @@ func runRequestLifecycleTests(t *testing.T, mgrClient, directClient client.Clien
 		gm := gomega.NewWithT(t)
 		s := &Server{
 			client:       mgrClient,
+			apiReader:    mgrClient,
 			dedupWindow:  0,
 			waitTimeout:  500 * time.Millisecond,
 			roles:        newRoleConfig("", "", "", "", "", ""),
@@ -190,6 +194,7 @@ func runSoakModeAndVerdictTests(t *testing.T, mgrClient, directClient client.Cli
 		gm := gomega.NewWithT(t)
 		s := &Server{
 			client:       directClient,
+			apiReader:    directClient,
 			dedupWindow:  0,
 			waitTimeout:  serverWaitTimeout,
 			roles:        newRoleConfig("", "", "", "", "", ""),
@@ -239,6 +244,7 @@ func runSoakModeAndVerdictTests(t *testing.T, mgrClient, directClient client.Cli
 		gm := gomega.NewWithT(t)
 		s := &Server{
 			client:       directClient,
+			apiReader:    directClient,
 			roles:        newRoleConfig("", testReviewerSub, "", "", "", ""),
 			authRequired: false,
 		}
@@ -313,6 +319,7 @@ func runSoakModeAndVerdictTests(t *testing.T, mgrClient, directClient client.Cli
 		gm := gomega.NewWithT(t)
 		s := &Server{
 			client:       directClient,
+			apiReader:    directClient,
 			roles:        newRoleConfig("", testReviewerSub, "", "", "", ""),
 			authRequired: false,
 		}
@@ -358,6 +365,7 @@ func runSoakModeAndVerdictTests(t *testing.T, mgrClient, directClient client.Cli
 		gm := gomega.NewWithT(t)
 		s := &Server{
 			client:       directClient,
+			apiReader:    directClient,
 			roles:        newRoleConfig("", testReviewerSub, "", "", "", ""),
 			authRequired: false,
 		}

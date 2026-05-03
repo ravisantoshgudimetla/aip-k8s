@@ -301,6 +301,7 @@ func runTrustGateTests(t *testing.T, mgrClient, directClient client.Client, ctx 
 
 		s := &Server{
 			client:      directClient,
+			apiReader:   directClient,
 			dedupWindow: 0,
 			waitTimeout: serverWaitTimeout,
 			roles:       newRoleConfig("", "", "", "", "", ""),
@@ -336,6 +337,7 @@ func runTrustGateTests(t *testing.T, mgrClient, directClient client.Client, ctx 
 
 		s := &Server{
 			client:      directClient,
+			apiReader:   directClient,
 			dedupWindow: 0,
 			waitTimeout: serverWaitTimeout,
 			roles:       newRoleConfig("", "", "", "", "", ""),
@@ -396,6 +398,7 @@ func runTrustGateTests(t *testing.T, mgrClient, directClient client.Client, ctx 
 
 		s := &Server{
 			client:      directClient,
+			apiReader:   directClient,
 			dedupWindow: 0,
 			waitTimeout: serverWaitTimeout,
 			roles:       newRoleConfig("", "", "", "", "", ""),
@@ -459,6 +462,7 @@ func runTrustGateTests(t *testing.T, mgrClient, directClient client.Client, ctx 
 
 		s := &Server{
 			client:      directClient,
+			apiReader:   directClient,
 			dedupWindow: 0,
 			waitTimeout: serverWaitTimeout,
 			roles:       newRoleConfig("", "", "", "", "", ""),
@@ -510,6 +514,7 @@ func runTrustGateTests(t *testing.T, mgrClient, directClient client.Client, ctx 
 
 		s := &Server{
 			client:      directClient,
+			apiReader:   directClient,
 			dedupWindow: 0,
 			waitTimeout: serverWaitTimeout,
 			roles:       newRoleConfig("", "", "", "", "", ""),
@@ -537,6 +542,7 @@ func runTrustGateTests(t *testing.T, mgrClient, directClient client.Client, ctx 
 		// Phase 2: Submit correct verdicts for all 5 requests.
 		verdictServer := &Server{
 			client:      directClient,
+			apiReader:   directClient,
 			dedupWindow: 0,
 			waitTimeout: serverWaitTimeout,
 			roles:       newRoleConfig("", "", "", "", "", ""),
@@ -611,6 +617,7 @@ func runTrustProfileReadTests(t *testing.T, _, directClient client.Client, ctx c
 
 		s := &Server{
 			client:       directClient,
+			apiReader:    directClient,
 			dedupWindow:  0,
 			waitTimeout:  serverWaitTimeout,
 			roles:        newRoleConfig("agent-tp-1", "reviewer-tp", "admin-tp", "", "", ""),
@@ -648,6 +655,7 @@ func runTrustProfileReadTests(t *testing.T, _, directClient client.Client, ctx c
 
 		s := &Server{
 			client:       directClient,
+			apiReader:    directClient,
 			dedupWindow:  0,
 			waitTimeout:  serverWaitTimeout,
 			roles:        newRoleConfig("agent-tp-2", "reviewer-tp", "admin-tp", "", "", ""),

@@ -104,6 +104,7 @@ func main() {
 	}
 	server := &Server{
 		client:                  k8sClient,
+		apiReader:               k8sClient,
 		watchClient:             k8sClient,
 		dedupWindow:             *dedupWindow,
 		waitTimeout:             wt,
