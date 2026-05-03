@@ -398,8 +398,7 @@ func (r *AgentTrustProfileReconciler) checkDemotion(profile *governancev1alpha1.
 	return false
 }
 
-// emitTrustProfileAudit creates an AuditRecord for trust level changes.
-func (r *AgentTrustProfileReconciler) emitTrustProfileAudit(ctx context.Context, profile *governancev1alpha1.AgentTrustProfile, oldLevel, newLevel string, demoted bool) error {
+func (r *AgentTrustProfileReconciler) emitTrustProfileAuditWithRetry(ctx context.Context, profile *governancev1alpha1.AgentTrustProfile, oldLevel, newLevel string, demoted bool) error {
 	eventType := governancev1alpha1.AuditEventTrustProfileUpdated
 	now := r.now()
 	audit := &governancev1alpha1.AuditRecord{
@@ -428,18 +427,12 @@ func (r *AgentTrustProfileReconciler) emitTrustProfileAudit(ctx context.Context,
 			},
 		},
 	}
-
 	if err := ctrl.SetControllerReference(profile, audit, r.Scheme); err != nil {
 		log.FromContext(ctx).Error(err, "Failed to set owner reference for trust profile AuditRecord")
 	}
-
-	return r.Create(ctx, audit)
-}
-
-func (r *AgentTrustProfileReconciler) emitTrustProfileAuditWithRetry(ctx context.Context, profile *governancev1alpha1.AgentTrustProfile, oldLevel, newLevel string, demoted bool) error {
 	var lastErr error
 	for range 3 {
-		if err := r.emitTrustProfileAudit(ctx, profile, oldLevel, newLevel, demoted); err == nil || errors.IsAlreadyExists(err) {
+		if err := r.Create(ctx, audit); err == nil || errors.IsAlreadyExists(err) {
 			return nil
 		} else {
 			lastErr = err
