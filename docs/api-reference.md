@@ -101,7 +101,9 @@ The gateway supports OIDC/JWT authentication. When enabled, every non-healthz re
 | Endpoint | Required role |
 |---|---|
 | `GET /healthz`, `GET /readyz` | None |
+| `GET /whoami` | None |
 | `GET /agent-requests`, `GET /agent-requests/{name}` | Any authenticated |
+| `GET /agent-requests/{name}/watch` | Any authenticated |
 | `POST /agent-requests` | `agent` |
 | `POST /agent-requests/{name}/executing` | `agent` (creator only) |
 | `POST /agent-requests/{name}/completed` | `agent` (creator only) |
@@ -109,6 +111,9 @@ The gateway supports OIDC/JWT authentication. When enabled, every non-healthz re
 | `POST /agent-requests/{name}/deny` | `reviewer` |
 | `PATCH /agent-requests/{name}/verdict` | `reviewer` |
 | `POST /agent-requests/recompute-accuracy` | `reviewer` |
+| `GET /audit-records` | Any authenticated |
+| `GET /diagnostic-accuracy-summaries` | Any authenticated |
+| `GET /agent-trust-profiles`, `GET /agent-trust-profiles/{name}` | `agent`, `reviewer`, or `admin` |
 | `POST /governed-resources` | `admin` |
 | `GET /governed-resources`, `GET /governed-resources/{name}` | `admin` |
 | `PUT /governed-resources/{name}` | `admin` |
@@ -117,6 +122,10 @@ The gateway supports OIDC/JWT authentication. When enabled, every non-healthz re
 | `GET /safety-policies`, `GET /safety-policies/{name}` | `admin` |
 | `PUT /safety-policies/{name}` | `admin` |
 | `DELETE /safety-policies/{name}` | `admin` |
+| `POST /agent-graduation-policies` | `admin` |
+| `GET /agent-graduation-policies`, `GET /agent-graduation-policies/{name}` | `admin` |
+| `PUT /agent-graduation-policies/{name}` | `admin` |
+| `DELETE /agent-graduation-policies/{name}` | `admin` |
 
 ### Production setup (Helm)
 
