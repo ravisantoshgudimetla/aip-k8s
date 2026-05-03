@@ -87,7 +87,7 @@ spec:
                 type: array
               totalReviewed:
                 description: |-
-                  TotalReviewed is the total number of AgentDiagnostic records
+                  TotalReviewed is the total number of AgentRequest records
                   with a non-empty verdict for this agentIdentity.
                 format: int64
                 minimum: 0

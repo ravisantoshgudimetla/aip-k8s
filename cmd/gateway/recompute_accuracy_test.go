@@ -20,7 +20,6 @@ func newRecomputeServer(objs ...client.Object) *Server {
 		WithObjects(objs...).
 		WithStatusSubresource(
 			&v1alpha1.AgentRequest{},
-			&v1alpha1.AgentDiagnostic{},
 			&v1alpha1.DiagnosticAccuracySummary{},
 		).
 		Build()
@@ -32,24 +31,25 @@ func newRecomputeServer(objs ...client.Object) *Server {
 	}
 }
 
-func makeDiagnostic(name, agentIdentity, verdict string) *v1alpha1.AgentDiagnostic {
-	d := &v1alpha1.AgentDiagnostic{
+func makeAgentRequest(name, agentIdentity, verdict string) *v1alpha1.AgentRequest {
+	r := &v1alpha1.AgentRequest{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
-		Spec: v1alpha1.AgentDiagnosticSpec{
-			AgentIdentity:  agentIdentity,
-			DiagnosticType: "diagnosis",
-			CorrelationID:  "corr-" + name,
-			Summary:        "test diagnostic " + name,
+		Spec: v1alpha1.AgentRequestSpec{
+			AgentIdentity: agentIdentity,
+			Action:        "scale",
+			Target:        v1alpha1.Target{URI: "k8s://default/deployments/test"},
+			Reason:        "test request " + name,
+			Mode:          v1alpha1.ModeObserve,
 		},
 	}
-	d.Status.Verdict = verdict
-	return d
+	r.Status.Verdict = verdict
+	return r
 }
 
-func makeDiagnosticAt(name, agentIdentity, verdict string, reviewedAt metav1.Time) *v1alpha1.AgentDiagnostic {
-	d := makeDiagnostic(name, agentIdentity, verdict)
-	d.Status.ReviewedAt = &reviewedAt
-	return d
+func makeAgentRequestAt(name, agentIdentity, verdict string, verdictAt metav1.Time) *v1alpha1.AgentRequest {
+	r := makeAgentRequest(name, agentIdentity, verdict)
+	r.Status.VerdictAt = &verdictAt
+	return r
 }
 
 func makeStaleSummary(
@@ -85,7 +85,7 @@ func getSummary(t *testing.T, srv *Server, name string) *v1alpha1.DiagnosticAccu
 func TestRecomputeSingleAgentSingleCorrectVerdict(t *testing.T) {
 	g := gomega.NewWithT(t)
 	srv := newRecomputeServer(
-		makeDiagnostic("diag-1", "agent-a", verdictCorrect),
+		makeAgentRequest("req-1", "agent-a", verdictCorrect),
 	)
 
 	err := srv.recomputeAccuracyForAgent(context.Background(), "default", "agent-a")
@@ -103,8 +103,8 @@ func TestRecomputeSingleAgentSingleCorrectVerdict(t *testing.T) {
 func TestRecomputeMultipleAgentsProduceSeparateSummaries(t *testing.T) {
 	g := gomega.NewWithT(t)
 	srv := newRecomputeServer(
-		makeDiagnostic("diag-1", "agent-a", verdictCorrect),
-		makeDiagnostic("diag-2", "agent-b", verdictIncorrect),
+		makeAgentRequest("req-1", "agent-a", verdictCorrect),
+		makeAgentRequest("req-2", "agent-b", verdictIncorrect),
 	)
 
 	err := srv.recomputeAccuracyForAgent(context.Background(), "default", "")
@@ -125,18 +125,18 @@ func TestRecomputeMultipleAgentsProduceSeparateSummaries(t *testing.T) {
 
 func TestRecomputeVerdictChangeReflectedOnRecompute(t *testing.T) {
 	g := gomega.NewWithT(t)
-	diag := makeDiagnostic("diag-1", "agent-a", verdictCorrect)
+	req := makeAgentRequest("req-1", "agent-a", verdictCorrect)
 	staleAcc := float64(1.0)
 	summaryName := summaryNameForAgent("agent-a")
 	staleSummary := makeStaleSummary(summaryName, "agent-a", 1, 0, 0, 1, &staleAcc)
-	srv := newRecomputeServer(diag, staleSummary)
+	srv := newRecomputeServer(req, staleSummary)
 
 	g.Expect(srv.client.Status().Update(context.Background(), staleSummary)).To(gomega.Succeed())
 
-	var fetched v1alpha1.AgentDiagnostic
+	var fetched v1alpha1.AgentRequest
 	g.Expect(srv.client.Get(
 		context.Background(),
-		client.ObjectKey{Namespace: "default", Name: "diag-1"},
+		client.ObjectKey{Namespace: "default", Name: "req-1"},
 		&fetched,
 	)).To(gomega.Succeed())
 	fetched.Status.Verdict = verdictIncorrect
@@ -152,7 +152,7 @@ func TestRecomputeVerdictChangeReflectedOnRecompute(t *testing.T) {
 	g.Expect(*summary.Status.DiagnosticAccuracy).To(gomega.BeNumerically("~", 0.0, 0.01))
 }
 
-func TestRecomputeAgentWithNoRemainingReviewedDiagnosticsIsZeroed(t *testing.T) {
+func TestRecomputeAgentWithNoRemainingReviewedRequestsIsZeroed(t *testing.T) {
 	g := gomega.NewWithT(t)
 	summaryName := summaryNameForAgent("agent-a")
 	staleAcc := float64(0.8)
@@ -175,7 +175,7 @@ func TestRecomputeAgentWithNoRemainingReviewedDiagnosticsIsZeroed(t *testing.T) 
 func TestRecomputePartialVerdictContributesHalfToAccuracy(t *testing.T) {
 	g := gomega.NewWithT(t)
 	srv := newRecomputeServer(
-		makeDiagnostic("diag-1", "agent-a", verdictPartial),
+		makeAgentRequest("req-1", "agent-a", verdictPartial),
 	)
 
 	err := srv.recomputeAccuracyForAgent(context.Background(), "default", "agent-a")
@@ -192,8 +192,8 @@ func TestRecomputePartialVerdictContributesHalfToAccuracy(t *testing.T) {
 func TestRecomputeAgentIdFilter(t *testing.T) {
 	g := gomega.NewWithT(t)
 	srv := newRecomputeServer(
-		makeDiagnostic("diag-1", "agent-a", verdictCorrect),
-		makeDiagnostic("diag-2", "agent-b", verdictIncorrect),
+		makeAgentRequest("req-1", "agent-a", verdictCorrect),
+		makeAgentRequest("req-2", "agent-b", verdictIncorrect),
 	)
 
 	err := srv.recomputeAccuracyForAgent(context.Background(), "default", "agent-a")
@@ -213,16 +213,17 @@ func TestRecomputeAgentIdFilter(t *testing.T) {
 	g.Expect(err).To(gomega.HaveOccurred())
 }
 
-func TestRecomputeUnreviewedDiagnosticsAreSkipped(t *testing.T) {
+func TestRecomputeUnreviewedRequestsAreSkipped(t *testing.T) {
 	g := gomega.NewWithT(t)
-	reviewed := makeDiagnostic("diag-reviewed", "agent-a", verdictCorrect)
-	unreviewed := &v1alpha1.AgentDiagnostic{
-		ObjectMeta: metav1.ObjectMeta{Name: "diag-unreviewed", Namespace: "default"},
-		Spec: v1alpha1.AgentDiagnosticSpec{
-			AgentIdentity:  "agent-a",
-			DiagnosticType: "diagnosis",
-			CorrelationID:  "corr-unreviewed",
-			Summary:        "no verdict yet",
+	reviewed := makeAgentRequest("req-reviewed", "agent-a", verdictCorrect)
+	unreviewed := &v1alpha1.AgentRequest{
+		ObjectMeta: metav1.ObjectMeta{Name: "req-unreviewed", Namespace: "default"},
+		Spec: v1alpha1.AgentRequestSpec{
+			AgentIdentity: "agent-a",
+			Action:        "scale",
+			Target:        v1alpha1.Target{URI: "k8s://default/deployments/test"},
+			Reason:        "no verdict yet",
+			Mode:          v1alpha1.ModeObserve,
 		},
 	}
 	srv := newRecomputeServer(reviewed, unreviewed)
@@ -240,9 +241,9 @@ func TestRecomputeMultiVerdictAccuracyArithmetic(t *testing.T) {
 	// 2 correct + 1 partial → (2 + 0.5) / 3 ≈ 0.833
 	g := gomega.NewWithT(t)
 	srv := newRecomputeServer(
-		makeDiagnostic("diag-1", "agent-a", verdictCorrect),
-		makeDiagnostic("diag-2", "agent-a", verdictCorrect),
-		makeDiagnostic("diag-3", "agent-a", verdictPartial),
+		makeAgentRequest("req-1", "agent-a", verdictCorrect),
+		makeAgentRequest("req-2", "agent-a", verdictCorrect),
+		makeAgentRequest("req-3", "agent-a", verdictPartial),
 	)
 
 	err := srv.recomputeAccuracyForAgent(context.Background(), "default", "agent-a")
@@ -262,8 +263,8 @@ func TestRecomputeLastUpdatedAtTracksNewestVerdict(t *testing.T) {
 	newer := metav1.NewTime(time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC))
 
 	srv := newRecomputeServer(
-		makeDiagnosticAt("diag-old", "agent-a", verdictCorrect, older),
-		makeDiagnosticAt("diag-new", "agent-a", verdictIncorrect, newer),
+		makeAgentRequestAt("req-old", "agent-a", verdictCorrect, older),
+		makeAgentRequestAt("req-new", "agent-a", verdictIncorrect, newer),
 	)
 
 	err := srv.recomputeAccuracyForAgent(context.Background(), "default", "agent-a")

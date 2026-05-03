@@ -25,34 +25,12 @@ var (
 		},
 		[]string{"method", "path", "status_code"},
 	)
-
-	diagnosticCreatedTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "aip_diagnostic_created_total",
-			Help: "Total number of AgentDiagnostic records created.",
-		},
-		[]string{"agent_identity"},
-	)
-	diagnosticDedupTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "aip_diagnostic_dedup_total",
-		Help: "Total number of AgentDiagnostic creation requests rejected as duplicates.",
-	})
-	diagnosticVerdictTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "aip_diagnostic_verdict_total",
-			Help: "Total number of AgentDiagnostic verdicts recorded, by verdict value.",
-		},
-		[]string{"verdict"},
-	)
 )
 
 func init() {
 	prometheus.MustRegister(
 		gatewayRequestTotal,
 		gatewayRequestDuration,
-		diagnosticCreatedTotal,
-		diagnosticDedupTotal,
-		diagnosticVerdictTotal,
 	)
 }
 

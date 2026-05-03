@@ -33,7 +33,7 @@ type DiagnosticAccuracySummarySpec struct {
 
 // DiagnosticAccuracySummaryStatus defines the observed state of DiagnosticAccuracySummary.
 type DiagnosticAccuracySummaryStatus struct {
-	// TotalReviewed is the total number of AgentDiagnostic records
+	// TotalReviewed is the total number of AgentRequest records
 	// with a non-empty verdict for this agentIdentity.
 	// +kubebuilder:validation:Minimum=0
 	// +optional

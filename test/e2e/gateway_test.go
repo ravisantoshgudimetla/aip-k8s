@@ -421,22 +421,6 @@ var _ = Describe("Phase 6: Gateway API", Ordered, func() {
 		})
 	})
 
-	Context("AgentDiagnostic deprecation", func() {
-		It("POST /agent-diagnostics returns 410 Gone with deprecation message", func() {
-			resp, err := gwPost("/agent-diagnostics", `{
-				"agentIdentity":  "any-agent",
-				"diagnosticType": "observation",
-				"correlationID":  "any-corr-id",
-				"summary":        "test"
-			}`)
-			Expect(err).NotTo(HaveOccurred())
-			defer resp.Body.Close() //nolint:errcheck
-			Expect(resp.StatusCode).To(Equal(http.StatusGone))
-			var body map[string]string
-			Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
-			Expect(body["error"]).To(ContainSubstring("deprecated"))
-		})
-	})
 })
 
 // gwPost posts JSON to the gateway and returns the response.
@@ -444,20 +428,18 @@ func gwPost(path, body string) (*http.Response, error) {
 	return http.Post(gwBaseURL+path, "application/json", strings.NewReader(body)) //nolint:noctx
 }
 
-// gwCleanup removes all AgentRequests, AgentDiagnostics, OpsLock Leases, and
-// the human-approval SafetyPolicy in ns. The gateway does not stamp a
-// test-specific label on resources it creates, so we delete all rather than
-// relying on a label selector.
+// gwCleanup removes all AgentRequests, OpsLock Leases, and the human-approval
+// SafetyPolicy in ns. The gateway does not stamp a test-specific label on
+// resources it creates, so we delete all rather than relying on a label
+// selector.
 // OpsLock Leases must be deleted explicitly: deleting the AgentRequest does not
 // synchronously release the Lease, so a stale Lease from a previous run blocks
 // the next request with "Lock contention" until LOCK_TIMEOUT expires.
 func gwCleanup(ns string) {
-	for _, res := range []string{"agentrequest", "agentdiagnostic"} {
-		cmd := exec.Command("kubectl", "delete", res, "--all", "-n", ns, "--ignore-not-found")
-		_, _ = utils.Run(cmd)
-	}
+	cmd := exec.Command("kubectl", "delete", "agentrequest", "--all", "-n", ns, "--ignore-not-found")
+	_, _ = utils.Run(cmd)
 	// Delete OpsLock Leases (named aip-lock-<hash>).
-	cmd := exec.Command("bash", "-c",
+	cmd = exec.Command("bash", "-c",
 		"kubectl get lease -n "+ns+" -o name 2>/dev/null | grep aip-lock- | xargs -r kubectl delete -n "+ns)
 	_, _ = utils.Run(cmd)
 	cmd = exec.Command("kubectl", "delete", "safetypolicy", "--all", "-n", ns, "--ignore-not-found")

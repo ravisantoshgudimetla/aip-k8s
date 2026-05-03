@@ -8,7 +8,7 @@
 
 AIP (Agent Intent Protocol) Kubernetes implementation. A governance control plane
 for autonomous agents: gateway (HTTP API), controller (reconciler), dashboard (UI),
-and CRDs (AgentRequest, AgentDiagnostic, SafetyPolicy, GovernedResource).
+and CRDs (AgentRequest, SafetyPolicy, GovernedResource, AgentTrustProfile, AgentGraduationPolicy).
 
 ## Build & test commands
 

@@ -153,10 +153,7 @@ const state = {
     requests: [],
     selectedRequest: null,
     auditRecords: [],
-    diagnostics: [],
-    diagnosticsJSON: '',
     namespace: 'default',
-    diagnosticsGen: 0,
     requestsGen: 0,
     role: '',          // 'agent' | 'reviewer' | 'admin' | ''
     identity: '',
@@ -757,14 +754,13 @@ function renderDetails() {
 // ── Diagnostics tab ──────────────────────────────────────────────────────────
 
 window.showTab = function(tabName) {
-    const views = ['requests', 'diagnostics', 'governed-resources', 'safety-policies'];
+    const views = ['requests', 'governed-resources', 'safety-policies'];
     for (const v of views) {
         const el = document.getElementById(v + '-view');
         if (el) el.style.display = v === tabName ? 'block' : 'none';
         const tab = document.getElementById('tab-' + v);
         if (tab) tab.classList.toggle('active', v === tabName);
     }
-    if (tabName === 'diagnostics') loadDiagnostics();
     if (tabName === 'governed-resources') loadGovernedResources();
     if (tabName === 'safety-policies') loadSafetyPolicies();
 };
@@ -1584,4 +1580,3 @@ async function init() {
 
 init();
 setInterval(fetchRequests, 3000);
-setInterval(loadDiagnostics, 3000);

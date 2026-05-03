@@ -36,7 +36,6 @@
 
             <nav class="tab-bar">
                 <button id="tab-requests" class="tab-button active" onclick="showTab('requests')">Agent Requests</button>
-                <button id="tab-diagnostics" class="tab-button" onclick="showTab('diagnostics')">Diagnostics</button>
                 <button id="tab-governed-resources" class="tab-button admin-only" style="display:none" onclick="showTab('governed-resources')">Governed Resources</button>
                 <button id="tab-safety-policies" class="tab-button admin-only" style="display:none" onclick="showTab('safety-policies')">Safety Policies</button>
             </nav>
@@ -74,38 +73,6 @@
                             </div>
                         </div>
                     </main>
-                </div>
-            </div>
-
-            <div id="diagnostics-view" style="display:none">
-                <div style="display:flex;align-items:center;gap:0.5rem;padding:0.75rem 1rem;border-bottom:1px solid var(--border-color);">
-                    <label for="ns-input" style="font-size:0.85rem;color:var(--text-secondary);white-space:nowrap;">Namespace</label>
-                    <input id="ns-input" type="text" value="default"
-                        style="font-size:0.85rem;padding:0.3rem 0.6rem;background:var(--surface-color);border:1px solid var(--border-color);border-radius:4px;color:var(--text-primary);width:160px;"
-                        onchange="loadDiagnostics()"
-                        onkeydown="if(event.key==='Enter')loadDiagnostics()" />
-                </div>
-                <div id="accuracy-chip-container" style="padding: 0 1rem; margin-bottom: 0.5rem; display: none;"></div>
-                <div class="diagnostics-table-container">
-                    <table class="diagnostics-table">
-                        <thead>
-                            <tr>
-                                <th>Age</th>
-                                <th>Agent Identity</th>
-                                <th>Type</th>
-                                <th>Summary</th>
-                                <th>Details</th>
-                                <th id="th-diag-verdict" style="display:none">Verdict</th>
-                            </tr>
-                        </thead>
-                        <tbody id="diagnostics-list">
-                            <tr>
-                                <td colspan="5" style="text-align: center; padding: 2rem; color: var(--text-secondary);">
-                                    Loading diagnostics...
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
                 </div>
             </div>
 

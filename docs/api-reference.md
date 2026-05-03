@@ -20,7 +20,6 @@ make build-gateway
 |--------|------|-------------|
 | `POST` | `/agent-requests/{name}/approve` | Approve an AgentRequest |
 | `POST` | `/agent-requests/{name}/completed` | Signal agent completed the action |
-| `POST` | `/agent-diagnostics` | Record an agent observation |
 | `POST` | `/agent-graduation-policies` | Create an AgentGraduationPolicy |
 | `POST` | `/agent-requests` | Submit an AgentRequest |
 | `POST` | `/governed-resources` | Create a GovernedResource |
@@ -30,22 +29,19 @@ make build-gateway
 | `DELETE` | `/safety-policies/{name}` | Delete a SafetyPolicy |
 | `POST` | `/agent-requests/{name}/deny` | Deny an AgentRequest |
 | `POST` | `/agent-requests/{name}/executing` | Signal agent started executing |
-| `GET` | `/agent-diagnostics/{name}` | Get an AgentDiagnostic by name |
 | `GET` | `/agent-graduation-policies/{name}` | Get an AgentGraduationPolicy by name |
 | `GET` | `/agent-requests/{name}` | Get an AgentRequest by name |
 | `GET` | `/agent-trust-profiles/{name}` | Get an AgentTrustProfile by name |
 | `GET` | `/governed-resources/{name}` | Get a GovernedResource by name |
 | `GET` | `/safety-policies/{name}` | Get a SafetyPolicy by name |
 | `GET` | `/diagnostic-accuracy-summaries` | List DiagnosticAccuracySummaries |
-| `GET` | `/agent-diagnostics` | List AgentDiagnostics |
 | `GET` | `/agent-graduation-policies` | List AgentGraduationPolicies |
 | `GET` | `/agent-requests` | List AgentRequests |
 | `GET` | `/agent-trust-profiles` | List AgentTrustProfiles |
 | `GET` | `/audit-records` | List AuditRecords |
 | `GET` | `/governed-resources` | List GovernedResources |
 | `GET` | `/safety-policies` | List SafetyPolicies |
-| `PATCH` | `/agent-diagnostics/{name}/status` | Patch AgentDiagnostic status |
-| `POST` | `/agent-diagnostics/recompute-accuracy` | Trigger accuracy recomputation |
+| `POST` | `/agent-requests/recompute-accuracy` | Trigger accuracy recomputation |
 | `PUT` | `/agent-graduation-policies/{name}` | Replace an AgentGraduationPolicy |
 | `PUT` | `/governed-resources/{name}` | Replace a GovernedResource |
 | `PUT` | `/safety-policies/{name}` | Replace a SafetyPolicy |
@@ -56,32 +52,16 @@ make build-gateway
 
 All endpoints accept and return `application/json`. Pass `?namespace=<ns>` to target a namespace other than `default`.
 
-## Example: record a diagnostic, then submit an intent
+## Example: submit an agent request
 
 ```sh
-# 1. Record what the agent observed
-curl -s -X POST http://localhost:8080/agent-diagnostics \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agentIdentity": "sre-agent-v1",
-    "diagnosticType": "diagnosis",
-    "correlationID": "incident-abc123",
-    "summary": "OOMKilled on payment-api (3x in 10 min). Recommending restart.",
-    "namespace": "production"
-  }'
-# Response includes the generated name and the exact label values stored,
-# so you can use them in label-selector queries without guessing normalization:
-# { "name": "diag-sre-agent-v1-x7k9p", "labels": { "aip.io/correlationID": "incident-abc123", ... } }
-
-# 2. Submit the intent — pass the same correlationID so the gateway stamps
-#    aip.io/correlationID on the AgentRequest label, linking both resources.
 curl -s -X POST http://localhost:8080/agent-requests \
   -H "Content-Type: application/json" \
   -d '{
     "agentIdentity": "sre-agent-v1",
     "action": "restart",
     "targetURI": "k8s://production/deployment/payment-api",
-    "reason": "OOMKilled 3 times in 10 minutes. Diagnostic: diag-sre-agent-v1-x7k9p",
+    "reason": "OOMKilled 3 times in 10 minutes.",
     "correlationID": "incident-abc123",
     "namespace": "production"
   }'
@@ -89,10 +69,10 @@ curl -s -X POST http://localhost:8080/agent-requests \
 
 ## Querying the full incident chain
 
-When a `correlationID` is supplied to both `POST /agent-diagnostics` and `POST /agent-requests`, the gateway stamps `aip.io/correlationID` on both resources as a label. The controller automatically propagates that label to every `AuditRecord` emitted for the request. Retrieve the complete chain with a single command:
+When a `correlationID` is supplied to `POST /agent-requests`, the gateway stamps `aip.io/correlationID` on the resource as a label. The controller automatically propagates that label to every `AuditRecord` emitted for the request. Retrieve the complete chain with a single command:
 
 ```sh
-kubectl get agentdiagnostics,agentrequests,auditrecords \
+kubectl get agentrequests,auditrecords \
   -n production \
   -l aip.io/correlationID=incident-abc123 \
   --sort-by=.metadata.creationTimestamp
@@ -109,7 +89,7 @@ The gateway supports OIDC/JWT authentication. When enabled, every non-healthz re
 | `--oidc-issuer-url` | `""` | OIDC provider URL. When set, Bearer token validation is required. When unset, auth is disabled (dev/test only). |
 | `--oidc-audience` | `aip-gateway` | Expected JWT `aud` claim. |
 | `--oidc-identity-claim` | `sub` | JWT claim used as the agent identity. |
-| `--agent-subjects` | `""` | Comma-separated JWT `sub` values permitted to create requests, record diagnostics, and transition state. |
+| `--agent-subjects` | `""` | Comma-separated JWT `sub` values permitted to create requests and transition state. |
 | `--reviewer-subjects` | `""` | Comma-separated JWT `sub` values permitted to approve/deny requests and write verdicts. |
 | `--admin-subjects` | `""` | Comma-separated JWT `sub` values permitted to manage `GovernedResource` and `SafetyPolicy`. |
 | `--admin-groups` | `""` | Comma-separated JWT group claim values that grant admin role. |
@@ -121,14 +101,19 @@ The gateway supports OIDC/JWT authentication. When enabled, every non-healthz re
 | Endpoint | Required role |
 |---|---|
 | `GET /healthz`, `GET /readyz` | None |
+| `GET /whoami` | None |
 | `GET /agent-requests`, `GET /agent-requests/{name}` | Any authenticated |
+| `GET /agent-requests/{name}/watch` | Any authenticated |
 | `POST /agent-requests` | `agent` |
 | `POST /agent-requests/{name}/executing` | `agent` (creator only) |
 | `POST /agent-requests/{name}/completed` | `agent` (creator only) |
 | `POST /agent-requests/{name}/approve` | `reviewer` |
 | `POST /agent-requests/{name}/deny` | `reviewer` |
-| `GET /agent-diagnostics`, `GET /agent-diagnostics/{name}` | Any authenticated |
-| `POST /agent-diagnostics` | `agent` |
+| `PATCH /agent-requests/{name}/verdict` | `reviewer` |
+| `POST /agent-requests/recompute-accuracy` | `reviewer` |
+| `GET /audit-records` | Any authenticated |
+| `GET /diagnostic-accuracy-summaries` | Any authenticated |
+| `GET /agent-trust-profiles`, `GET /agent-trust-profiles/{name}` | `agent`, `reviewer`, or `admin` |
 | `POST /governed-resources` | `admin` |
 | `GET /governed-resources`, `GET /governed-resources/{name}` | `admin` |
 | `PUT /governed-resources/{name}` | `admin` |
@@ -137,6 +122,10 @@ The gateway supports OIDC/JWT authentication. When enabled, every non-healthz re
 | `GET /safety-policies`, `GET /safety-policies/{name}` | `admin` |
 | `PUT /safety-policies/{name}` | `admin` |
 | `DELETE /safety-policies/{name}` | `admin` |
+| `POST /agent-graduation-policies` | `admin` |
+| `GET /agent-graduation-policies`, `GET /agent-graduation-policies/{name}` | `admin` |
+| `PUT /agent-graduation-policies/{name}` | `admin` |
+| `DELETE /agent-graduation-policies/{name}` | `admin` |
 
 ### Production setup (Helm)
 

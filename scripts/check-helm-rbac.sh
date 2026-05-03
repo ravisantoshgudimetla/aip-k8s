@@ -56,7 +56,6 @@ missing_file="$(mktemp)"
 trap 'rm -f "$canonical_resources_file" "$missing_file"' EXIT
 
 while IFS= read -r resource; do
-    # Anchor on end-of-line so "agentdiagnostics" does not match "agentdiagnostics/status".
     if ! grep -qE "^[[:space:]]*- ${resource}$" "$HELM_RBAC"; then
         echo "$resource" >> "$missing_file"
     fi
@@ -92,7 +91,7 @@ if [ ! -f "$HELM_GW_RBAC" ]; then
 fi
 
 gw_fail=0
-for base_resource in agentrequests agentdiagnostics diagnosticaccuracysummaries governedresources; do
+for base_resource in agentrequests diagnosticaccuracysummaries governedresources; do
     status_resource="${base_resource}/status"
     if grep -qE "^[[:space:]]*- ${base_resource}$" "$HELM_GW_RBAC"; then
         if ! grep -qE "^[[:space:]]*- ${status_resource}$" "$HELM_GW_RBAC"; then

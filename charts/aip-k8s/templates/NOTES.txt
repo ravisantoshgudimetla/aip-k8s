@@ -34,7 +34,6 @@ If you are upgrading without a local checkout, use the matching release tag:
   BASE=https://raw.githubusercontent.com/ravisantoshgudimetla/aip-k8s/refs/tags/${TAG}/charts/aip-k8s/crds
   kubectl apply --server-side --force-conflicts \
     -f ${BASE}/governance.aip.io_agentrequests.yaml \
-    -f ${BASE}/governance.aip.io_agentdiagnostics.yaml \
     -f ${BASE}/governance.aip.io_auditrecords.yaml \
     -f ${BASE}/governance.aip.io_safetypolicies.yaml \
     -f ${BASE}/governance.aip.io_governedresources.yaml \

@@ -124,69 +124,6 @@ func TestListAgentRequests_FilteringAndPagination(t *testing.T) {
 	g.Expect(flat).To(gomega.HaveLen(8))
 }
 
-func TestListAgentDiagnostics_FilteringAndPagination(t *testing.T) {
-	g := gomega.NewWithT(t)
-
-	objs := []client.Object{}
-	for i := 1; i <= 10; i++ {
-		diag := &v1alpha1.AgentDiagnostic{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      fmt.Sprintf("diag-%d", i),
-				Namespace: "default",
-				Labels: map[string]string{
-					"aip.io/agentIdentity": "agent-1",
-					"aip.io/correlationID": fmt.Sprintf("corr-%d", i),
-				},
-				CreationTimestamp: metav1.NewTime(time.Now().Add(time.Duration(-i) * time.Minute)),
-			},
-			Spec: v1alpha1.AgentDiagnosticSpec{
-				AgentIdentity: "agent-1",
-				CorrelationID: fmt.Sprintf("corr-%d", i),
-			},
-		}
-		objs = append(objs, diag)
-	}
-
-	s := newTestServer(objs...)
-
-	// 1. Filter by agentIdentity and correlationID
-	req := httptest.NewRequest(http.MethodGet, "/agent-diagnostics?agentIdentity=agent-1&correlationID=corr-5", nil)
-	req = req.WithContext(withCallerSub(req.Context(), "reviewer-sub"))
-	w := httptest.NewRecorder()
-	s.handleListAgentDiagnostics(w, req)
-	g.Expect(w.Code).To(gomega.Equal(http.StatusOK))
-
-	var items []v1alpha1.AgentDiagnostic
-	g.Expect(json.Unmarshal(w.Body.Bytes(), &items)).To(gomega.Succeed())
-	g.Expect(items).To(gomega.HaveLen(1))
-	g.Expect(items[0].Name).To(gomega.Equal("diag-5"))
-
-	// 2. Pagination: verify the response switches to the paged envelope format when
-	// ?limit= is present. Item count not asserted — fake client ignores Limit.
-	req = httptest.NewRequest(http.MethodGet, "/agent-diagnostics?limit=3", nil)
-	req = req.WithContext(withCallerSub(req.Context(), "reviewer-sub"))
-	w = httptest.NewRecorder()
-	s.handleListAgentDiagnostics(w, req)
-	g.Expect(w.Code).To(gomega.Equal(http.StatusOK))
-
-	var paginated struct {
-		Items    []v1alpha1.AgentDiagnostic `json:"items"`
-		Continue string                     `json:"continue"`
-	}
-	g.Expect(json.Unmarshal(w.Body.Bytes(), &paginated)).To(gomega.Succeed())
-	g.Expect(paginated.Items).NotTo(gomega.BeNil())
-
-	// 3. Without ?limit= the response is a flat array.
-	req = httptest.NewRequest(http.MethodGet, "/agent-diagnostics", nil)
-	req = req.WithContext(withCallerSub(req.Context(), "reviewer-sub"))
-	w = httptest.NewRecorder()
-	s.handleListAgentDiagnostics(w, req)
-	g.Expect(w.Code).To(gomega.Equal(http.StatusOK))
-	var flat []v1alpha1.AgentDiagnostic
-	g.Expect(json.Unmarshal(w.Body.Bytes(), &flat)).To(gomega.Succeed())
-	g.Expect(flat).To(gomega.HaveLen(10))
-}
-
 func TestListAuditRecords_LabelFilteringAndPagination(t *testing.T) {
 	g := gomega.NewWithT(t)
 
