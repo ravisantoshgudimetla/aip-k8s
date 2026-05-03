@@ -108,6 +108,7 @@ The gateway supports OIDC/JWT authentication. When enabled, every non-healthz re
 | `POST /agent-requests/{name}/approve` | `reviewer` |
 | `POST /agent-requests/{name}/deny` | `reviewer` |
 | `PATCH /agent-requests/{name}/verdict` | `reviewer` |
+| `POST /agent-requests/recompute-accuracy` | `reviewer` |
 | `POST /governed-resources` | `admin` |
 | `GET /governed-resources`, `GET /governed-resources/{name}` | `admin` |
 | `PUT /governed-resources/{name}` | `admin` |

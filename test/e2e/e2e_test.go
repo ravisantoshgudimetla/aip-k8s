@@ -412,7 +412,7 @@ var _ = Describe("Manager", Ordered, func() {
 	})
 
 	// Phase 5: Garbage Collection
-	Context("Phase 6: Garbage Collection", Ordered, func() {
+	Context("Phase 5: Garbage Collection", Ordered, func() {
 		It("should verify the controller has GC flags in the deployment", func() {
 			By("fetching the controller deployment container args")
 			cmd := exec.Command("kubectl", "get", "deployment",

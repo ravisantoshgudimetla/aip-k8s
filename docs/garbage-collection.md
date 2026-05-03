@@ -42,7 +42,7 @@ For every terminal `AgentRequest`, the GC worker executes the following logic in
 
 1. **Eligible?**: Only `Completed`, `Failed`, `Denied`, and `Expired` phases are considered.
 2. **Hard TTL override**: If age is greater than or equal to `--gc-hard-ttl`, delete unconditionally. The hard TTL always wins to protect etcd.
-3. **Cascade delete**: Associated `AuditRecord` objects (linked via `spec.agentRequestRef`) are deleted before the `AgentRequest` itself to prevent orphaned records in envtest.
+3. **Cascade delete**: Associated `AuditRecord` objects (linked via `spec.agentRequestRef`) are deleted before the `AgentRequest` itself to avoid orphaned records.
 
 ---
 
@@ -100,7 +100,7 @@ rate(aip_gc_objects_skipped_total{reason="dry_run"}[5m])
 | `--gc-enabled` | `false` | Enable the GC engine background loop. |
 | `--gc-interval` | `1h` | Time between GC scan cycles. |
 | `--gc-dry-run` | `true` | If true, log deletions without acting. |
-| `--gc-hard-ttl` | `0` | Forced deletion age for terminal AgentRequests. `0` disables GC. |
+| `--gc-hard-ttl` | `0` | Forced deletion age for terminal AgentRequests. `0` disables the hard-TTL deletion rule only — scans still run. To stop GC entirely, use `--gc-enabled=false`. |
 | `--gc-delete-rate-per-sec` | `100` | Max object deletions per second (token bucket). |
 | `--gc-page-size` | `500` | Objects per list page during GC scan. |
 | `--gc-safety-min-count` | `10` | Skip GC if terminal object count is below this threshold. |

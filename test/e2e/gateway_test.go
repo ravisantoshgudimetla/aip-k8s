@@ -422,7 +422,6 @@ var _ = Describe("Phase 6: Gateway API", Ordered, func() {
 	})
 
 })
-}
 
 // gwPost posts JSON to the gateway and returns the response.
 func gwPost(path, body string) (*http.Response, error) {
@@ -440,7 +439,7 @@ func gwCleanup(ns string) {
 	cmd := exec.Command("kubectl", "delete", "agentrequest", "--all", "-n", ns, "--ignore-not-found")
 	_, _ = utils.Run(cmd)
 	// Delete OpsLock Leases (named aip-lock-<hash>).
-	cmd := exec.Command("bash", "-c",
+	cmd = exec.Command("bash", "-c",
 		"kubectl get lease -n "+ns+" -o name 2>/dev/null | grep aip-lock- | xargs -r kubectl delete -n "+ns)
 	_, _ = utils.Run(cmd)
 	cmd = exec.Command("kubectl", "delete", "safetypolicy", "--all", "-n", ns, "--ignore-not-found")
