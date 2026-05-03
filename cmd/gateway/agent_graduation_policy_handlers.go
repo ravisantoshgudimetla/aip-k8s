@@ -202,7 +202,7 @@ func (s *Server) handleDeleteAgentGraduationPolicy(w http.ResponseWriter, r *htt
 
 	// Check if object still exists (blocked by finalizers)
 	var check v1alpha1.AgentGraduationPolicy
-	if getErr := s.client.Get(r.Context(), types.NamespacedName{Namespace: ns, Name: name}, &check); getErr != nil {
+	if getErr := s.apiReader.Get(r.Context(), types.NamespacedName{Namespace: ns, Name: name}, &check); getErr != nil {
 		if apierrors.IsNotFound(getErr) {
 			w.WriteHeader(http.StatusNoContent)
 			return

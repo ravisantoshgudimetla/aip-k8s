@@ -47,6 +47,7 @@ func runAgentGraduationPolicyTests(t *testing.T, _, directClient client.Client, 
 
 		s := &Server{
 			client:       directClient,
+			apiReader:    directClient,
 			dedupWindow:  0,
 			waitTimeout:  serverWaitTimeout,
 			roles:        newRoleConfig("agent-1", "reviewer-1", "admin-1", "", "", ""),
@@ -134,6 +135,7 @@ func runAgentGraduationPolicyTests(t *testing.T, _, directClient client.Client, 
 
 		s := &Server{
 			client:       directClient,
+			apiReader:    directClient,
 			dedupWindow:  0,
 			waitTimeout:  serverWaitTimeout,
 			roles:        newRoleConfig("agent-1", "reviewer-1", "admin-1", "", "", ""),
@@ -173,6 +175,7 @@ func runAgentGraduationPolicyTests(t *testing.T, _, directClient client.Client, 
 
 		s := &Server{
 			client:       directClient,
+			apiReader:    directClient,
 			dedupWindow:  0,
 			waitTimeout:  serverWaitTimeout,
 			roles:        newRoleConfig("agent-1", "reviewer-1", "admin-1", "", "", ""),

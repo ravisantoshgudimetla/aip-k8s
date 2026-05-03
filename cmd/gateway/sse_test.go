@@ -28,6 +28,7 @@ func newTestServerWithWatch(objs ...client.Object) *Server {
 		Build()
 	return &Server{
 		client:       fc,
+		apiReader:    fc,
 		watchClient:  fc,
 		dedupWindow:  0,
 		waitTimeout:  5 * time.Second,

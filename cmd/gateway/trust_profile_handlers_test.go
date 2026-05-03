@@ -27,6 +27,7 @@ func newTestServerWithTrustProfiles(profiles ...*v1alpha1.AgentTrustProfile) *Se
 		Build()
 	return &Server{
 		client:       fc,
+		apiReader:    fc,
 		dedupWindow:  0,
 		waitTimeout:  5 * time.Second,
 		roles:        newRoleConfig("agent-1,agent-2", "reviewer-1", "admin-1", "", "", ""),

@@ -25,6 +25,7 @@ func newRecomputeServer(objs ...client.Object) *Server {
 		Build()
 	return &Server{
 		client:      fc,
+		apiReader:   fc,
 		dedupWindow: 0,
 		waitTimeout: 90 * time.Second,
 		roles:       newRoleConfig("", "", "", "", "", ""),

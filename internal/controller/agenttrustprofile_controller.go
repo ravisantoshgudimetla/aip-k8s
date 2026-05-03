@@ -401,10 +401,11 @@ func (r *AgentTrustProfileReconciler) checkDemotion(profile *governancev1alpha1.
 // emitTrustProfileAudit creates an AuditRecord for trust level changes.
 func (r *AgentTrustProfileReconciler) emitTrustProfileAudit(ctx context.Context, profile *governancev1alpha1.AgentTrustProfile, oldLevel, newLevel string, demoted bool) error {
 	eventType := governancev1alpha1.AuditEventTrustProfileUpdated
+	now := r.now()
 	audit := &governancev1alpha1.AuditRecord{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: fmt.Sprintf("%s-trust-", profile.Name),
-			Namespace:    profile.Namespace,
+			Name:      deterministicAuditName(profile.Name, eventType, now),
+			Namespace: profile.Namespace,
 			Labels: map[string]string{
 				"aip.io/agentIdentity": profile.Spec.AgentIdentity,
 			},
@@ -413,7 +414,7 @@ func (r *AgentTrustProfileReconciler) emitTrustProfileAudit(ctx context.Context,
 			},
 		},
 		Spec: governancev1alpha1.AuditRecordSpec{
-			Timestamp:       metav1.NewTime(r.now()),
+			Timestamp:       metav1.NewTime(now),
 			AgentIdentity:   profile.Spec.AgentIdentity,
 			AgentRequestRef: "",
 			Event:           eventType,
@@ -438,7 +439,7 @@ func (r *AgentTrustProfileReconciler) emitTrustProfileAudit(ctx context.Context,
 func (r *AgentTrustProfileReconciler) emitTrustProfileAuditWithRetry(ctx context.Context, profile *governancev1alpha1.AgentTrustProfile, oldLevel, newLevel string, demoted bool) error {
 	var lastErr error
 	for range 3 {
-		if err := r.emitTrustProfileAudit(ctx, profile, oldLevel, newLevel, demoted); err == nil {
+		if err := r.emitTrustProfileAudit(ctx, profile, oldLevel, newLevel, demoted); err == nil || errors.IsAlreadyExists(err) {
 			return nil
 		} else {
 			lastErr = err

@@ -28,6 +28,7 @@ func newTestServerWithGraduationPolicies(policies ...*v1alpha1.AgentGraduationPo
 		Build()
 	return &Server{
 		client:       fc,
+		apiReader:    fc,
 		dedupWindow:  0,
 		waitTimeout:  5 * time.Second,
 		roles:        newRoleConfig("agent-1", "reviewer-1", "admin-1", "", "", ""),

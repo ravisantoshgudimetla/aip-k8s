@@ -22,6 +22,7 @@ func runSSEStreamingTests(t *testing.T, _, directClient client.Client,
 		gm := gomega.NewWithT(t)
 		s := &Server{
 			client:       directClient,
+			apiReader:    directClient,
 			watchClient:  watchClient,
 			dedupWindow:  0,
 			waitTimeout:  serverWaitTimeout,
@@ -67,6 +68,7 @@ func runSSEStreamingTests(t *testing.T, _, directClient client.Client,
 		gm := gomega.NewWithT(t)
 		s := &Server{
 			client:       directClient,
+			apiReader:    directClient,
 			watchClient:  watchClient,
 			dedupWindow:  0,
 			waitTimeout:  serverWaitTimeout,
@@ -123,6 +125,7 @@ func runSSEStreamingTests(t *testing.T, _, directClient client.Client,
 		gm := gomega.NewWithT(t)
 		s := &Server{
 			client:       directClient,
+			apiReader:    directClient,
 			watchClient:  watchClient,
 			dedupWindow:  0,
 			waitTimeout:  serverWaitTimeout,
@@ -172,6 +175,7 @@ func runSSEStreamingTests(t *testing.T, _, directClient client.Client,
 		gm := gomega.NewWithT(t)
 		s := &Server{
 			client:       directClient,
+			apiReader:    directClient,
 			watchClient:  watchClient,
 			roles:        newRoleConfig("", "", "", "", "", ""),
 			authRequired: false,
@@ -190,6 +194,7 @@ func runSSEStreamingTests(t *testing.T, _, directClient client.Client,
 		gm := gomega.NewWithT(t)
 		s := &Server{
 			client:       directClient,
+			apiReader:    directClient,
 			watchClient:  watchClient,
 			roles:        newRoleConfig("", "", "", "", "", ""),
 			authRequired: false,
