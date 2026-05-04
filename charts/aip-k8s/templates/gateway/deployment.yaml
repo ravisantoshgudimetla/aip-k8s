@@ -55,7 +55,7 @@ spec:
             - --admin-groups={{ .Values.gateway.auth.adminGroups }}
             {{- end }}
             {{- if .Values.gateway.jwtKeyPath }}
-            - --jwt-key-path={{ .Values.gateway.jwtKeyPath | quote }}
+            - --jwt-key-path={{ .Values.gateway.jwtKeyPath }}
             {{- end }}
           ports:
             - name: http
@@ -104,6 +104,9 @@ spec:
         - name: jwt-signing-key
           secret:
             secretName: aip-jwt-signing-key
+            items:
+              - key: tls.key
+                path: {{ .Values.gateway.jwtKeyPath | base }}
         {{- end }}
 {{- if .Values.gateway.extraVolumes }}
         {{- toYaml .Values.gateway.extraVolumes | nindent 8 }}

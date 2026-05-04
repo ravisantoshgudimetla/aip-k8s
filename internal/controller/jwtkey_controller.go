@@ -56,19 +56,21 @@ type JWTKeyReconciler struct {
 	Clock       func() time.Time
 }
 
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=create;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=create
 // +kubebuilder:rbac:groups="",resources=secrets,resourceNames=aip-jwt-signing-key,verbs=get;update;patch
 
 func (r *JWTKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	now := r.now()
+	nn := types.NamespacedName{Name: jwtKeySecretName, Namespace: r.Namespace}
 
 	var secret corev1.Secret
-	err := r.APIReader.Get(ctx, types.NamespacedName{Name: jwtKeySecretName, Namespace: r.Namespace}, &secret)
+	err := r.APIReader.Get(ctx, nn, &secret)
 
 	if err != nil && !errors.IsNotFound(err) {
-		logger.Error(err, "Failed to get JWT signing key Secret")
-		return ctrl.Result{}, err
+		wrappedErr := fmt.Errorf("failed to get secret %s/%s: %w", nn.Namespace, nn.Name, err)
+		logger.Error(wrappedErr, "Failed to get JWT signing key Secret")
+		return ctrl.Result{}, wrappedErr
 	}
 
 	needsRotation := false
@@ -83,8 +85,9 @@ func (r *JWTKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	if needsRotation {
 		if err := r.rotateKey(ctx, now); err != nil {
-			logger.Error(err, "Failed to rotate JWT signing key")
-			return ctrl.Result{}, err
+			wrappedErr := fmt.Errorf("failed to rotate secret %s/%s: %w", nn.Namespace, nn.Name, err)
+			logger.Error(wrappedErr, "Failed to rotate JWT signing key")
+			return ctrl.Result{}, wrappedErr
 		}
 		logger.Info("JWT signing key rotated successfully")
 	}
@@ -121,8 +124,9 @@ func (r *JWTKeyReconciler) rotateKey(ctx context.Context, now time.Time) error {
 		annotationLastRotated: now.Format(time.RFC3339),
 	}
 
+	nn := types.NamespacedName{Name: jwtKeySecretName, Namespace: r.Namespace}
 	var existing corev1.Secret
-	if err := r.APIReader.Get(ctx, types.NamespacedName{Name: jwtKeySecretName, Namespace: r.Namespace}, &existing); err != nil {
+	if err := r.APIReader.Get(ctx, nn, &existing); err != nil {
 		if errors.IsNotFound(err) {
 			secret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
@@ -137,11 +141,11 @@ func (r *JWTKeyReconciler) rotateKey(ctx context.Context, now time.Time) error {
 				if errors.IsAlreadyExists(err) {
 					return nil
 				}
-				return fmt.Errorf("create secret: %w", err)
+				return fmt.Errorf("create secret %s/%s: %w", nn.Namespace, nn.Name, err)
 			}
 			return nil
 		}
-		return fmt.Errorf("get existing secret: %w", err)
+		return fmt.Errorf("get existing secret %s/%s: %w", nn.Namespace, nn.Name, err)
 	}
 
 	base := existing.DeepCopy()
@@ -151,7 +155,7 @@ func (r *JWTKeyReconciler) rotateKey(ctx context.Context, now time.Time) error {
 	}
 	existing.Annotations[annotationLastRotated] = now.Format(time.RFC3339)
 	if err := r.Patch(ctx, &existing, client.MergeFrom(base)); err != nil {
-		return fmt.Errorf("patch secret: %w", err)
+		return fmt.Errorf("patch secret %s/%s: %w", nn.Namespace, nn.Name, err)
 	}
 	return nil
 }
