@@ -50,6 +50,8 @@ var (
 		"Comma-separated CIDRs for proxy-header trust. Empty = any source (dev only). Ignored when --oidc-issuer-url is set.")
 	waitTimeout = flag.Duration("wait-timeout", 90*time.Second,
 		"Maximum time the gateway will poll for AgentRequest resolution before returning 504.")
+	jwtKeyPath = flag.String("jwt-key-path", "",
+		"Path to Ed25519 private key PEM file for JWT signing")
 )
 
 func main() {
@@ -102,6 +104,17 @@ func main() {
 		wt = 90 * time.Second
 		log.Printf("--wait-timeout must be positive; using default %v", wt)
 	}
+
+	var jwtMgr *JWTManager
+	if *jwtKeyPath != "" {
+		var err error
+		jwtMgr, err = NewJWTManager(*jwtKeyPath, time.Now)
+		if err != nil {
+			log.Fatalf("Failed to load JWT key: %v", err)
+		}
+		log.Printf("JWT manager initialized with key: %s", *jwtKeyPath)
+	}
+
 	server := &Server{
 		client:                  k8sClient,
 		watchClient:             k8sClient,
@@ -110,6 +123,7 @@ func main() {
 		roles:                   rc,
 		authRequired:            authRequired,
 		requireGovernedResource: *requireGovernedResourceFlag,
+		jwtManager:             jwtMgr,
 	}
 	mux := http.NewServeMux()
 

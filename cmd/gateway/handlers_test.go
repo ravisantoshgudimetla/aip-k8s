@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -316,4 +318,86 @@ func TestReviewerCannotCreateRequest(t *testing.T) {
 
 	g.Expect(w.Code).To(gomega.Equal(http.StatusForbidden))
 	g.Expect(w.Body.String()).To(gomega.ContainSubstring("agent role required"))
+}
+
+func newTestJWTManager(t *testing.T) *JWTManager {
+	t.Helper()
+	tmpDir := t.TempDir()
+	keyPath := filepath.Join(tmpDir, "key.pem")
+	if err := GenerateEd25519Key(keyPath); err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	mgr, err := NewJWTManager(keyPath, time.Now)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+	return mgr
+}
+
+func TestApproveReturnsJWTToken(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	ar := pendingAgentRequest("req-jwt", "default", "agent-sub")
+	ar.Spec.Action = "pull-request"
+	ar.Spec.Target.URI = "github://owner/repo"
+	s := newTestServer(ar)
+	s.jwtManager = newTestJWTManager(t)
+	if err := s.client.Status().Update(context.Background(), ar); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/agent-requests/req-jwt/approve", strings.NewReader(`{}`))
+	req.SetPathValue("name", "req-jwt")
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(withCallerSub(req.Context(), "reviewer-sub"))
+	w := httptest.NewRecorder()
+	s.handleApproveAgentRequest(w, req)
+
+	g.Expect(w.Code).To(gomega.Equal(http.StatusOK))
+
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	g.Expect(resp).To(gomega.HaveKey("token"))
+	g.Expect(resp).To(gomega.HaveKey("token_expires_at"))
+
+	token, ok := resp["token"].(string)
+	g.Expect(ok).To(gomega.BeTrue())
+	g.Expect(token).NotTo(gomega.BeEmpty())
+
+	// Verify the token is valid and contains expected claims
+	claims, err := s.jwtManager.ValidateToken(token)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(claims.Subject).To(gomega.Equal("agent-sub"))
+	g.Expect(claims.Action).To(gomega.Equal("pull-request"))
+	g.Expect(claims.Repo).To(gomega.Equal("github://owner/repo"))
+	g.Expect(claims.Request).To(gomega.Equal("req-jwt"))
+}
+
+func TestApproveWithoutJWTManager(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	ar := pendingAgentRequest("req-no-jwt", "default", "agent-sub")
+	s := newTestServer(ar)
+	// jwtManager is nil — no token should be returned
+	if err := s.client.Status().Update(context.Background(), ar); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/agent-requests/req-no-jwt/approve", strings.NewReader(`{}`))
+	req.SetPathValue("name", "req-no-jwt")
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(withCallerSub(req.Context(), "reviewer-sub"))
+	w := httptest.NewRecorder()
+	s.handleApproveAgentRequest(w, req)
+
+	g.Expect(w.Code).To(gomega.Equal(http.StatusOK))
+
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	g.Expect(resp).NotTo(gomega.HaveKey("token"))
+	g.Expect(resp).NotTo(gomega.HaveKey("token_expires_at"))
 }

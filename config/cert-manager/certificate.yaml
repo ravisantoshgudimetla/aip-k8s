@@ -1,0 +1,15 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: aip-jwt-signing
+  namespace: aip-k8s-system
+spec:
+  secretName: aip-jwt-signing-key
+  privateKey:
+    algorithm: Ed25519
+    encoding: PKCS8
+  issuerRef:
+    name: aip-selfsigned-issuer
+    kind: ClusterIssuer
+  duration: 2160h
+  renewBefore: 360h

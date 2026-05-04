@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -179,5 +180,25 @@ func (s *Server) handleHumanDecision(w http.ResponseWriter, r *http.Request, dec
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	response := map[string]any{
+		"name":  agentReq.Name,
+		"phase": agentReq.Status.Phase,
+	}
+
+	if decision == "approved" && s.jwtManager != nil {
+		token, expiresAt, err := s.jwtManager.MintToken(
+			agentReq.Spec.AgentIdentity,
+			agentReq.Spec.Action,
+			agentReq.Spec.Target.URI,
+			agentReq.Name,
+		)
+		if err != nil {
+			log.Printf("Failed to mint JWT token: %v", err)
+		} else {
+			response["token"] = token
+			response["token_expires_at"] = expiresAt.Format(time.RFC3339)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }
