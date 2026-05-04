@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -14,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/agent-control-plane/aip-k8s/api/v1alpha1"
+	"github.com/agent-control-plane/aip-k8s/internal/jwt"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 )
 
@@ -50,7 +54,11 @@ var (
 		"Comma-separated CIDRs for proxy-header trust. Empty = any source (dev only). Ignored when --oidc-issuer-url is set.")
 	waitTimeout = flag.Duration("wait-timeout", 90*time.Second,
 		"Maximum time the gateway will poll for AgentRequest resolution before returning 504.")
+	jwtKeyPath = flag.String("jwt-key-path", "",
+		"Path to Ed25519 private key PEM file for JWT signing")
 )
+
+const defaultKeyWatchInterval = 5 * time.Minute
 
 func main() {
 	flag.Parse()
@@ -102,6 +110,21 @@ func main() {
 		wt = 90 * time.Second
 		log.Printf("--wait-timeout must be positive; using default %v", wt)
 	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	var jwtMgr *jwt.Manager
+	if *jwtKeyPath != "" {
+		var err error
+		jwtMgr, err = jwt.NewManager(*jwtKeyPath, time.Now)
+		if err != nil {
+			log.Fatalf("Failed to load JWT key: %v", err)
+		}
+		log.Printf("JWT manager initialized with key: %s", *jwtKeyPath)
+		jwtMgr.StartKeyWatcher(ctx, *jwtKeyPath, defaultKeyWatchInterval, log.Printf)
+	}
+
 	server := &Server{
 		client:                  k8sClient,
 		apiReader:               k8sClient,
@@ -111,6 +134,7 @@ func main() {
 		roles:                   rc,
 		authRequired:            authRequired,
 		requireGovernedResource: *requireGovernedResourceFlag,
+		jwtManager:              jwtMgr,
 	}
 	mux := http.NewServeMux()
 

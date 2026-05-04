@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -166,6 +167,30 @@ func (s *Server) handleHumanDecision(w http.ResponseWriter, r *http.Request, dec
 		humanReason = "denied via dashboard"
 	}
 
+	response := map[string]any{
+		"name": agentReq.Name,
+	}
+
+	// Mint token *before* persisting approval so a mint failure does not leave
+	// the request approved without a token.
+	if decision == "approved" && s.jwtManager != nil {
+		token, expiresAt, err := s.jwtManager.MintToken(
+			agentReq.Spec.AgentIdentity,
+			agentReq.Spec.Action,
+			agentReq.Spec.Target.URI,
+			agentReq.Name,
+		)
+		if err != nil {
+			log.Printf("Failed to mint JWT token: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"error": "approval failed: could not mint token",
+			})
+			return
+		}
+		response["token"] = token
+		response["token_expires_at"] = expiresAt.Format(time.RFC3339)
+	}
+
 	patch := client.MergeFrom(agentReq.DeepCopy())
 	agentReq.Spec.HumanApproval = &v1alpha1.HumanApproval{
 		Decision:      decision,
@@ -179,5 +204,6 @@ func (s *Server) handleHumanDecision(w http.ResponseWriter, r *http.Request, dec
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	response["phase"] = agentReq.Status.Phase
+	writeJSON(w, http.StatusOK, response)
 }

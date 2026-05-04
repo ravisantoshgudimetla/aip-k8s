@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
@@ -83,6 +84,9 @@ func startTestManager(t *testing.T, cfg *rest.Config) client.Client {
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:  scheme.Scheme,
 		Metrics: metricsserver.Options{BindAddress: "0"},
+		Controller: config.Controller{
+			SkipNameValidation: func() *bool { b := true; return &b }(),
+		},
 	})
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)

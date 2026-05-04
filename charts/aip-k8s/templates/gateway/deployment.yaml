@@ -54,6 +54,9 @@ spec:
             {{- if .Values.gateway.auth.adminGroups }}
             - --admin-groups={{ .Values.gateway.auth.adminGroups }}
             {{- end }}
+            {{- if .Values.gateway.jwtKeyPath }}
+            - --jwt-key-path={{ .Values.gateway.jwtKeyPath }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 8080
@@ -87,11 +90,24 @@ spec:
             requests:
               cpu: 10m
               memory: 64Mi
-{{- if .Values.gateway.extraVolumeMounts }}
           volumeMounts:
+            {{- if .Values.gateway.jwtKeyPath }}
+            - name: jwt-signing-key
+              mountPath: {{ .Values.gateway.jwtKeyPath | dir | quote }}
+              readOnly: true
+            {{- end }}
+{{- if .Values.gateway.extraVolumeMounts }}
             {{- toYaml .Values.gateway.extraVolumeMounts | nindent 12 }}
 {{- end }}
-{{- if .Values.gateway.extraVolumes }}
       volumes:
+        {{- if .Values.gateway.jwtKeyPath }}
+        - name: jwt-signing-key
+          secret:
+            secretName: aip-jwt-signing-key
+            items:
+              - key: tls.key
+                path: {{ .Values.gateway.jwtKeyPath | base }}
+        {{- end }}
+{{- if .Values.gateway.extraVolumes }}
         {{- toYaml .Values.gateway.extraVolumes | nindent 8 }}
 {{- end }}

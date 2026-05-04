@@ -88,6 +88,10 @@ func main() {
 	opsLockDuration := flag.Duration("ops-lock-duration", 5*time.Minute, "TTL for OpsLock leases")
 	opsLockWaitTimeout := flag.Duration("ops-lock-wait-timeout", 60*time.Second,
 		"Maximum time a Pending AgentRequest waits to acquire the OpsLock Lease before being Denied with LOCK_TIMEOUT.")
+	jwtKeyNamespace := flag.String("jwt-key-namespace", "aip-k8s-system",
+		"Namespace where the JWT signing key Secret is managed.")
+	jwtKeyRotationTTL := flag.Duration("jwt-key-rotation-ttl", 0,
+		"How long before the JWT signing key is rotated. 0 uses the default (90 days).")
 
 	// GC flags — applies to terminal AgentRequests (Completed/Failed/Denied/Expired).
 	gcCfg := gc.DefaultGCConfig()
@@ -254,6 +258,16 @@ func main() {
 		Scheme:    mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "AgentTrustProfile")
+		os.Exit(1)
+	}
+	if err := (&controller.JWTKeyReconciler{
+		Client:      mgr.GetClient(),
+		APIReader:   mgr.GetAPIReader(),
+		Scheme:      mgr.GetScheme(),
+		Namespace:   *jwtKeyNamespace,
+		RotationTTL: *jwtKeyRotationTTL,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "JWTKey")
 		os.Exit(1)
 	}
 

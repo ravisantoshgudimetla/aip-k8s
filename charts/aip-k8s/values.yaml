@@ -36,6 +36,10 @@ gateway:
     adminGroups: ""
     trustedProxyCIDRs: ""
     requireGovernedResource: false
+  # jwtKeyPath: when set, the gateway mounts the aip-jwt-signing-key Secret
+  # at this path and mints Ed25519 JWT tokens on AgentRequest approval.
+  # Leave empty to disable JWT minting.
+  jwtKeyPath: ""
   service:
     type: ClusterIP
     port: 8080
