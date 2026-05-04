@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -135,6 +136,7 @@ func main() {
 		authRequired:            authRequired,
 		requireGovernedResource: *requireGovernedResourceFlag,
 		jwtManager:              jwtMgr,
+		httpClient:              &http.Client{Timeout: 30 * time.Second},
 	}
 	mux := http.NewServeMux()
 
@@ -166,6 +168,12 @@ func main() {
 	mux.HandleFunc("GET /diagnostic-accuracy-summaries", server.handleListAccuracySummaries)
 	mux.HandleFunc("GET /agent-trust-profiles", server.handleListAgentTrustProfiles)
 	mux.HandleFunc("GET /agent-trust-profiles/{name}", server.handleGetAgentTrustProfile)
+	mux.HandleFunc("GET /mcp-registry", server.handleMCPRegistry)
+	// /mcp-proxy is registered on a separate mux to bypass the outer
+	// authMiddleware (OIDC/proxy-header). It enforces its own AIP JWT auth.
+	publicMux := http.NewServeMux()
+	publicMux.HandleFunc("POST /mcp-proxy/{server}/{tool}", server.handleMCPProxy)
+
 	mux.HandleFunc("POST /governed-resources", server.handleCreateGovernedResource)
 	mux.HandleFunc("GET /governed-resources", server.handleListGovernedResources)
 	mux.HandleFunc("GET /governed-resources/{name}", server.handleGetGovernedResource)
@@ -198,7 +206,14 @@ func main() {
 	mux.Handle("GET /metrics", metricsHandler())
 
 	log.Printf("Starting AIP Demo Gateway on %s", *addr)
-	if err := http.ListenAndServe(*addr, metricsMiddleware(loggingMiddleware(authMiddleware(mux)))); err != nil {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/mcp-proxy/") {
+			publicMux.ServeHTTP(w, r)
+			return
+		}
+		authMiddleware(mux).ServeHTTP(w, r)
+	})
+	if err := http.ListenAndServe(*addr, metricsMiddleware(loggingMiddleware(handler))); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }

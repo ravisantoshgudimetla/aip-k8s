@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-config
+  namespace: aip-k8s-system
+data:
+  MCP_REGISTRY: |-
+    [{
+      "name": "github",
+      "url": "http://github-mcp",
+      "status": "available",
+      "tools": [
+        {"name": "create_pull_request", "read_only": false},
+        {"name": "get_file_contents", "read_only": true},
+        {"name": "list_pull_requests", "read_only": true}
+      ]
+    }]

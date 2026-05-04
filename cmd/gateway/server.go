@@ -68,6 +68,7 @@ type Server struct {
 	authRequired            bool
 	requireGovernedResource bool
 	jwtManager              *jwt.Manager
+	httpClient              *http.Client
 }
 
 type affectedTargetBody struct {

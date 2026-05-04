@@ -69,6 +69,12 @@ test/e2e/            — Ginkgo e2e test suite
   found, 409 conflict/duplicate, 500 internal error.
 - Use `writeJSON` for all JSON responses — never write directly to `http.ResponseWriter`.
 - Use role constants (`roleAgent`, `roleReviewer`, `roleAdmin`) — never inline strings.
+- **When adding or changing gateway endpoints**, run:
+  ```bash
+  make docs-generate   # regenerate docs/api-reference.md endpoint table
+  make docs-lint       # verify endpoint + auth rule tables are complete
+  ```
+  The auth rules table is manual — add new endpoints to `### Authorization rules`.
 
 ### Logging
 - **Never log secrets, tokens, or credentials** — not even in error messages.

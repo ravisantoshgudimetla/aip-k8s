@@ -70,6 +70,13 @@ make lint-fix   # Auto-fix code style
 make test       # Run unit tests
 ```
 
+**After adding or changing gateway endpoints (`cmd/gateway/main.go`):**
+```
+make docs-generate   # Regenerate endpoint table in docs/api-reference.md
+make docs-lint       # Fail if endpoint or auth-rule tables are stale/missing
+```
+The `### Authorization rules` table is manual — add new endpoints to it.
+
 ## CLI Commands Cheat Sheet
 
 ### Create API (your own types)

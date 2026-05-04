@@ -114,6 +114,8 @@ The gateway supports OIDC/JWT authentication. When enabled, every non-healthz re
 | `GET /audit-records` | Any authenticated |
 | `GET /diagnostic-accuracy-summaries` | Any authenticated |
 | `GET /agent-trust-profiles`, `GET /agent-trust-profiles/{name}` | `agent`, `reviewer`, or `admin` |
+| `GET /mcp-registry` | Any authenticated |
+| `POST /mcp-proxy/{server}/{tool}` | `agent` (requires valid AIP JWT) |
 | `POST /governed-resources` | `admin` |
 | `GET /governed-resources`, `GET /governed-resources/{name}` | `admin` |
 | `PUT /governed-resources/{name}` | `admin` |
