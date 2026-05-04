@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -16,7 +19,10 @@ import (
 type JWTManager struct {
 	privateKey ed25519.PrivateKey
 	publicKey  ed25519.PublicKey
+	prevPublic ed25519.PublicKey // previous key, valid for 5-min grace after rotation
+	lastRotate time.Time
 	clock      func() time.Time
+	mu         sync.RWMutex
 }
 
 type AIPClaims struct {
@@ -32,23 +38,24 @@ func NewJWTManager(keyPath string, clock func() time.Time) (*JWTManager, error) 
 	}
 	data, err := os.ReadFile(keyPath)
 	if err != nil {
-		return nil, fmt.Errorf("read key file: %w", err)
+		return nil, fmt.Errorf("read key file %s: %w", keyPath, err)
 	}
 	block, _ := pem.Decode(data)
 	if block == nil {
-		return nil, fmt.Errorf("no PEM block found")
+		return nil, fmt.Errorf("no PEM block found in %s", keyPath)
 	}
 	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("parse private key: %w", err)
+		return nil, fmt.Errorf("parse private key from %s: %w", keyPath, err)
 	}
 	pk, ok := key.(ed25519.PrivateKey)
 	if !ok {
-		return nil, fmt.Errorf("not an Ed25519 key")
+		return nil, fmt.Errorf("not an Ed25519 key in %s", keyPath)
 	}
 	return &JWTManager{
 		privateKey: pk,
 		publicKey:  pk.Public().(ed25519.PublicKey),
+		lastRotate: clock(),
 		clock:      clock,
 	}, nil
 }
@@ -56,24 +63,75 @@ func NewJWTManager(keyPath string, clock func() time.Time) (*JWTManager, error) 
 func GenerateEd25519Key(path string) error {
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		return fmt.Errorf("generate key: %w", err)
+		return fmt.Errorf("generate key for %s: %w", path, err)
 	}
 	keyData, err := x509.MarshalPKCS8PrivateKey(priv)
 	if err != nil {
-		return fmt.Errorf("marshal key: %w", err)
+		return fmt.Errorf("marshal key for %s: %w", path, err)
 	}
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		return fmt.Errorf("create key file: %w", err)
+		return fmt.Errorf("create key file %s: %w", path, err)
 	}
 	if err := pem.Encode(file, &pem.Block{Type: "PRIVATE KEY", Bytes: keyData}); err != nil {
 		_ = file.Close()
-		return fmt.Errorf("encode PEM: %w", err)
+		return fmt.Errorf("encode PEM for %s: %w", path, err)
 	}
 	if err := file.Close(); err != nil {
-		return fmt.Errorf("close key file: %w", err)
+		return fmt.Errorf("close key file %s: %w", path, err)
 	}
 	return nil
+}
+
+// reloadKey re-reads the key file and atomically swaps the in-memory key pair.
+// The old public key is kept as prevPublic for a 5-minute grace period so tokens
+// signed just before rotation continue to validate.
+func (m *JWTManager) reloadKey(keyPath string) error {
+	data, err := os.ReadFile(keyPath)
+	if err != nil {
+		return fmt.Errorf("read key file %s: %w", keyPath, err)
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return fmt.Errorf("no PEM block found in %s", keyPath)
+	}
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("parse private key from %s: %w", keyPath, err)
+	}
+	pk, ok := key.(ed25519.PrivateKey)
+	if !ok {
+		return fmt.Errorf("not an Ed25519 key in %s", keyPath)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.prevPublic = m.publicKey
+	m.privateKey = pk
+	m.publicKey = pk.Public().(ed25519.PublicKey)
+	m.lastRotate = m.clock()
+	return nil
+}
+
+// StartKeyWatcher polls keyPath every interval and reloads the Ed25519 key pair
+// when the file changes (e.g. after cert-manager rotates the Secret). A failed
+// reload is logged but does not crash the gateway — the previous key remains
+// active so in-flight tokens continue to work.
+func (m *JWTManager) StartKeyWatcher(ctx context.Context, keyPath string, interval time.Duration) {
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if err := m.reloadKey(keyPath); err != nil {
+					log.Printf("JWT key reload failed (keeping previous key): %v", err)
+				}
+			}
+		}
+	}()
 }
 
 func (m *JWTManager) MintToken(agentID, action, repo, requestName string) (string, time.Time, error) {
@@ -94,6 +152,8 @@ func (m *JWTManager) MintToken(agentID, action, repo, requestName string) (strin
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	signed, err := token.SignedString(m.privateKey)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("sign token: %w", err)
@@ -102,11 +162,35 @@ func (m *JWTManager) MintToken(agentID, action, repo, requestName string) (strin
 }
 
 func (m *JWTManager) ValidateToken(tokenString string) (*AIPClaims, error) {
+	m.mu.RLock()
+	pubKey := m.publicKey
+	prevPub := m.prevPublic
+	lastRotate := m.lastRotate
+	m.mu.RUnlock()
+
+	claims, err := m.validateWithKey(tokenString, pubKey)
+	if err == nil {
+		return claims, nil
+	}
+
+	// If current key fails and we're within 5 minutes of rotation,
+	// try the previous key to allow in-flight tokens to validate.
+	if len(prevPub) > 0 && m.clock().Sub(lastRotate) <= 5*time.Minute {
+		claims, prevErr := m.validateWithKey(tokenString, prevPub)
+		if prevErr == nil {
+			return claims, nil
+		}
+	}
+
+	return nil, err
+}
+
+func (m *JWTManager) validateWithKey(tokenString string, pubKey ed25519.PublicKey) (*AIPClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &AIPClaims{}, func(t *jwt.Token) (any, error) {
 		if t.Method != jwt.SigningMethodEdDSA {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
-		return m.publicKey, nil
+		return pubKey, nil
 	},
 		jwt.WithTimeFunc(m.clock),
 	)
@@ -121,7 +205,11 @@ func (m *JWTManager) ValidateToken(tokenString string) (*AIPClaims, error) {
 }
 
 func (m *JWTManager) PublicKeyPEM() ([]byte, error) {
-	keyData, err := x509.MarshalPKIXPublicKey(m.publicKey)
+	m.mu.RLock()
+	pubKey := m.publicKey
+	m.mu.RUnlock()
+
+	keyData, err := x509.MarshalPKIXPublicKey(pubKey)
 	if err != nil {
 		return nil, fmt.Errorf("marshal public key: %w", err)
 	}

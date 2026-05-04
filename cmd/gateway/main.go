@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -105,6 +108,9 @@ func main() {
 		log.Printf("--wait-timeout must be positive; using default %v", wt)
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	var jwtMgr *JWTManager
 	if *jwtKeyPath != "" {
 		var err error
@@ -113,6 +119,7 @@ func main() {
 			log.Fatalf("Failed to load JWT key: %v", err)
 		}
 		log.Printf("JWT manager initialized with key: %s", *jwtKeyPath)
+		jwtMgr.StartKeyWatcher(ctx, *jwtKeyPath, 5*time.Minute)
 	}
 
 	server := &Server{
