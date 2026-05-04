@@ -55,7 +55,7 @@ spec:
             - --admin-groups={{ .Values.gateway.auth.adminGroups }}
             {{- end }}
             {{- if .Values.gateway.jwtKeyPath }}
-            - --jwt-key-path=/etc/aip/jwt/tls.key
+            - --jwt-key-path={{ .Values.gateway.jwtKeyPath | quote }}
             {{- end }}
           ports:
             - name: http
@@ -93,7 +93,7 @@ spec:
           volumeMounts:
             {{- if .Values.gateway.jwtKeyPath }}
             - name: jwt-signing-key
-              mountPath: /etc/aip/jwt
+              mountPath: {{ .Values.gateway.jwtKeyPath | dir | quote }}
               readOnly: true
             {{- end }}
 {{- if .Values.gateway.extraVolumeMounts }}

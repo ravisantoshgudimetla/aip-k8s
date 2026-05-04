@@ -38,6 +38,7 @@ spec:
             - --gc-page-size={{ .Values.gc.pageSize }}
             - --gc-safety-min-count={{ .Values.gc.safetyMinCount }}
             {{- end }}
+            - --jwt-key-namespace={{ .Release.Namespace | quote }}
             {{- with .Values.controller.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

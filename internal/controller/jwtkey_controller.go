@@ -27,12 +27,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	"github.com/agent-control-plane/aip-k8s/internal/jwt"
@@ -175,8 +173,10 @@ func (r *JWTKeyReconciler) now() time.Time {
 // SetupWithManager sets up the controller with the Manager.
 func (r *JWTKeyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Fire one startup reconcile so the controller creates the Secret immediately
-	// on first install — the informer only fires events for existing objects, so
-	// without this the Secret would never be created if it doesn't already exist.
+	// on first install, then rely on periodic requeue (every hour) to check for
+	// rotation. We avoid For(&corev1.Secret{}) to prevent cluster-wide Secret
+	// informer creation; the narrow RBAC (resourceNames=aip-jwt-signing-key) is
+	// incompatible with list/watch on all Secrets.
 	startupCh := make(chan event.TypedGenericEvent[*corev1.Secret], 1)
 	startupCh <- event.TypedGenericEvent[*corev1.Secret]{
 		Object: &corev1.Secret{
@@ -187,9 +187,6 @@ func (r *JWTKeyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("jwtkey").
-		For(&corev1.Secret{}, builder.WithPredicates(predicate.NewPredicateFuncs(func(o client.Object) bool {
-			return o.GetName() == jwtKeySecretName && o.GetNamespace() == r.Namespace
-		}))).
 		WatchesRawSource(source.Channel(startupCh, &handler.TypedEnqueueRequestForObject[*corev1.Secret]{})).
 		Complete(r)
 }

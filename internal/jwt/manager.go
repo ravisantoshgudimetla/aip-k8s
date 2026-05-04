@@ -146,11 +146,17 @@ func (m *Manager) ReloadKey(keyPath string) error {
 		return fmt.Errorf("not an Ed25519 key in %s", keyPath)
 	}
 
+	newPub := pk.Public().(ed25519.PublicKey)
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if bytes.Equal(newPub, m.publicKey) {
+		// Key hasn't changed — no-op, preserve prevPublic and lastRotate
+		return nil
+	}
 	m.prevPublic = m.publicKey
 	m.privateKey = pk
-	m.publicKey = pk.Public().(ed25519.PublicKey)
+	m.publicKey = newPub
 	m.lastRotate = m.clock()
 	return nil
 }
@@ -238,6 +244,7 @@ func (m *Manager) validateWithKey(tokenString string, pubKey ed25519.PublicKey) 
 		return pubKey, nil
 	},
 		jwt.WithTimeFunc(m.clock),
+		jwt.WithIssuer("aip-gateway"),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("parse token: %w", err)
