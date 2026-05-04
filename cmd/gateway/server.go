@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/agent-control-plane/aip-k8s/api/v1alpha1"
+	"github.com/agent-control-plane/aip-k8s/internal/jwt"
 )
 
 var errVerdictWrongPhase = errors.New("verdict only allowed in AwaitingVerdict phase")
@@ -65,7 +66,7 @@ type Server struct {
 	roles                   *roleConfig
 	authRequired            bool
 	requireGovernedResource bool
-	jwtManager              *JWTManager
+	jwtManager              *jwt.Manager
 }
 
 type affectedTargetBody struct {

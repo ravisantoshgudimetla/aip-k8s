@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/agent-control-plane/aip-k8s/api/v1alpha1"
+	"github.com/agent-control-plane/aip-k8s/internal/jwt"
 )
 
 func newTestScheme() *runtime.Scheme {
@@ -320,14 +321,14 @@ func TestReviewerCannotCreateRequest(t *testing.T) {
 	g.Expect(w.Body.String()).To(gomega.ContainSubstring("agent role required"))
 }
 
-func newTestJWTManager(t *testing.T) *JWTManager {
+func newTestJWTManager(t *testing.T) *jwt.Manager {
 	t.Helper()
 	tmpDir := t.TempDir()
 	keyPath := filepath.Join(tmpDir, "key.pem")
-	if err := GenerateEd25519Key(keyPath); err != nil {
+	if err := jwt.GenerateEd25519Key(keyPath); err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	mgr, err := NewJWTManager(keyPath, time.Now)
+	mgr, err := jwt.NewManager(keyPath, time.Now)
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
 	}

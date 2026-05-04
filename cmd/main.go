@@ -256,6 +256,14 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "AgentTrustProfile")
 		os.Exit(1)
 	}
+	if err := (&controller.JWTKeyReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Namespace: "aip-k8s-system",
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "JWTKey")
+		os.Exit(1)
+	}
 
 	gcMgr := &gc.GCManager{
 		APIReader: mgr.GetAPIReader(),

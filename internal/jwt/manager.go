@@ -1,4 +1,5 @@
-package main
+// Package jwt provides Ed25519 JWT signing and validation for the AIP gateway.
+package jwt
 
 import (
 	"bytes"
@@ -16,7 +17,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-type JWTManager struct {
+// Manager holds an Ed25519 key pair for signing and validating AIP JWTs.
+type Manager struct {
 	privateKey ed25519.PrivateKey
 	publicKey  ed25519.PublicKey
 	prevPublic ed25519.PublicKey // previous key, valid for 5-min grace after rotation
@@ -25,14 +27,17 @@ type JWTManager struct {
 	mu         sync.RWMutex
 }
 
-type AIPClaims struct {
+// Claims are the custom JWT claims for AIP tokens.
+type Claims struct {
 	jwt.RegisteredClaims
 	Action  string `json:"action"`
 	Repo    string `json:"repo"`
 	Request string `json:"request"`
 }
 
-func NewJWTManager(keyPath string, clock func() time.Time) (*JWTManager, error) {
+// NewManager loads an Ed25519 private key from a PEM file.
+// clock is injectable for testing; pass time.Now for production.
+func NewManager(keyPath string, clock func() time.Time) (*Manager, error) {
 	if clock == nil {
 		clock = time.Now
 	}
@@ -52,7 +57,7 @@ func NewJWTManager(keyPath string, clock func() time.Time) (*JWTManager, error) 
 	if !ok {
 		return nil, fmt.Errorf("not an Ed25519 key in %s", keyPath)
 	}
-	return &JWTManager{
+	return &Manager{
 		privateKey: pk,
 		publicKey:  pk.Public().(ed25519.PublicKey),
 		lastRotate: clock(),
@@ -60,6 +65,8 @@ func NewJWTManager(keyPath string, clock func() time.Time) (*JWTManager, error) 
 	}, nil
 }
 
+// GenerateEd25519Key generates a new Ed25519 key pair and writes the private
+// key to path in PKCS#8 PEM format.
 func GenerateEd25519Key(path string) error {
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -83,10 +90,41 @@ func GenerateEd25519Key(path string) error {
 	return nil
 }
 
-// reloadKey re-reads the key file and atomically swaps the in-memory key pair.
-// The old public key is kept as prevPublic for a 5-minute grace period so tokens
-// signed just before rotation continue to validate.
-func (m *JWTManager) reloadKey(keyPath string) error {
+// GenerateKeyPair creates a new Ed25519 key pair and returns both the private
+// key PEM and the public key PEM.
+func GenerateKeyPair() (privatePEM []byte, publicPEM []byte, err error) {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate key: %w", err)
+	}
+
+	pkcs8, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal private key: %w", err)
+	}
+
+	var privBuf bytes.Buffer
+	if err := pem.Encode(&privBuf, &pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8}); err != nil {
+		return nil, nil, fmt.Errorf("encode private key: %w", err)
+	}
+
+	pkix, err := x509.MarshalPKIXPublicKey(priv.Public())
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal public key: %w", err)
+	}
+
+	var pubBuf bytes.Buffer
+	if err := pem.Encode(&pubBuf, &pem.Block{Type: "PUBLIC KEY", Bytes: pkix}); err != nil {
+		return nil, nil, fmt.Errorf("encode public key: %w", err)
+	}
+
+	return privBuf.Bytes(), pubBuf.Bytes(), nil
+}
+
+// ReloadKey re-reads the key file and atomically swaps the in-memory key pair.
+// The old public key is kept as prevPublic for a 5-minute grace period so
+// tokens signed just before rotation continue to validate.
+func (m *Manager) ReloadKey(keyPath string) error {
 	data, err := os.ReadFile(keyPath)
 	if err != nil {
 		return fmt.Errorf("read key file %s: %w", keyPath, err)
@@ -114,10 +152,10 @@ func (m *JWTManager) reloadKey(keyPath string) error {
 }
 
 // StartKeyWatcher polls keyPath every interval and reloads the Ed25519 key pair
-// when the file changes (e.g. after cert-manager rotates the Secret). A failed
+// when the file changes (e.g. after the controller rotates the Secret). A failed
 // reload is logged but does not crash the gateway — the previous key remains
 // active so in-flight tokens continue to work.
-func (m *JWTManager) StartKeyWatcher(ctx context.Context, keyPath string, interval time.Duration) {
+func (m *Manager) StartKeyWatcher(ctx context.Context, keyPath string, interval time.Duration) {
 	go func() {
 		t := time.NewTicker(interval)
 		defer t.Stop()
@@ -126,7 +164,7 @@ func (m *JWTManager) StartKeyWatcher(ctx context.Context, keyPath string, interv
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				if err := m.reloadKey(keyPath); err != nil {
+				if err := m.ReloadKey(keyPath); err != nil {
 					log.Printf("JWT key reload failed (keeping previous key): %v", err)
 				}
 			}
@@ -134,11 +172,13 @@ func (m *JWTManager) StartKeyWatcher(ctx context.Context, keyPath string, interv
 	}()
 }
 
-func (m *JWTManager) MintToken(agentID, action, repo, requestName string) (string, time.Time, error) {
+// MintToken creates a signed JWT for an approved AgentRequest.
+// Returns the token string, its expiry time, and any error.
+func (m *Manager) MintToken(agentID, action, repo, requestName string) (string, time.Time, error) {
 	now := m.clock()
 	expiresAt := now.Add(30 * time.Minute)
 
-	claims := AIPClaims{
+	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -161,7 +201,8 @@ func (m *JWTManager) MintToken(agentID, action, repo, requestName string) (strin
 	return signed, expiresAt, nil
 }
 
-func (m *JWTManager) ValidateToken(tokenString string) (*AIPClaims, error) {
+// ValidateToken verifies an AIP JWT and returns its claims.
+func (m *Manager) ValidateToken(tokenString string) (*Claims, error) {
 	m.mu.RLock()
 	pubKey := m.publicKey
 	prevPub := m.prevPublic
@@ -185,8 +226,8 @@ func (m *JWTManager) ValidateToken(tokenString string) (*AIPClaims, error) {
 	return nil, err
 }
 
-func (m *JWTManager) validateWithKey(tokenString string, pubKey ed25519.PublicKey) (*AIPClaims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &AIPClaims{}, func(t *jwt.Token) (any, error) {
+func (m *Manager) validateWithKey(tokenString string, pubKey ed25519.PublicKey) (*Claims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(t *jwt.Token) (any, error) {
 		if t.Method != jwt.SigningMethodEdDSA {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
@@ -197,14 +238,15 @@ func (m *JWTManager) validateWithKey(tokenString string, pubKey ed25519.PublicKe
 	if err != nil {
 		return nil, fmt.Errorf("parse token: %w", err)
 	}
-	claims, ok := token.Claims.(*AIPClaims)
+	claims, ok := token.Claims.(*Claims)
 	if !ok || !token.Valid {
 		return nil, fmt.Errorf("invalid token claims")
 	}
 	return claims, nil
 }
 
-func (m *JWTManager) PublicKeyPEM() ([]byte, error) {
+// PublicKeyPEM returns the current public key in PEM format.
+func (m *Manager) PublicKeyPEM() ([]byte, error) {
 	m.mu.RLock()
 	pubKey := m.publicKey
 	m.mu.RUnlock()

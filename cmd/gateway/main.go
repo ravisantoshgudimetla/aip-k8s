@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/agent-control-plane/aip-k8s/api/v1alpha1"
+	"github.com/agent-control-plane/aip-k8s/internal/jwt"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 )
 
@@ -111,10 +112,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	var jwtMgr *JWTManager
+	var jwtMgr *jwt.Manager
 	if *jwtKeyPath != "" {
 		var err error
-		jwtMgr, err = NewJWTManager(*jwtKeyPath, time.Now)
+		jwtMgr, err = jwt.NewManager(*jwtKeyPath, time.Now)
 		if err != nil {
 			log.Fatalf("Failed to load JWT key: %v", err)
 		}
