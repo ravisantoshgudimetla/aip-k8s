@@ -20,6 +20,8 @@ rules:
   verbs:
   - create
   - get
+  - list
+  - watch
 - apiGroups:
   - ""
   resourceNames:
@@ -28,10 +30,8 @@ rules:
   - secrets
   verbs:
   - get
-  - list
   - patch
   - update
-  - watch
 - apiGroups:
   - apps
   resources:

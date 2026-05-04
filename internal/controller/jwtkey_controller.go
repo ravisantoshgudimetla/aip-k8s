@@ -58,8 +58,8 @@ type JWTKeyReconciler struct {
 	Clock       func() time.Time
 }
 
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=create
-// +kubebuilder:rbac:groups="",resources=secrets,resourceNames=aip-jwt-signing-key,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=create;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,resourceNames=aip-jwt-signing-key,verbs=get;update;patch
 
 func (r *JWTKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
