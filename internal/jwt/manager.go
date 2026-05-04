@@ -9,12 +9,16 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"log"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+)
+
+const (
+	keyRotationGracePeriod = 5 * time.Minute
+	tokenTTL               = 30 * time.Minute
 )
 
 // Manager holds an Ed25519 key pair for signing and validating AIP JWTs.
@@ -81,7 +85,7 @@ func GenerateEd25519Key(path string) error {
 		return fmt.Errorf("create key file %s: %w", path, err)
 	}
 	if err := pem.Encode(file, &pem.Block{Type: "PRIVATE KEY", Bytes: keyData}); err != nil {
-		_ = file.Close()
+		_ = file.Close() // best-effort; the PEM encode error is the primary failure
 		return fmt.Errorf("encode PEM for %s: %w", path, err)
 	}
 	if err := file.Close(); err != nil {
@@ -153,9 +157,9 @@ func (m *Manager) ReloadKey(keyPath string) error {
 
 // StartKeyWatcher polls keyPath every interval and reloads the Ed25519 key pair
 // when the file changes (e.g. after the controller rotates the Secret). A failed
-// reload is logged but does not crash the gateway — the previous key remains
-// active so in-flight tokens continue to work.
-func (m *Manager) StartKeyWatcher(ctx context.Context, keyPath string, interval time.Duration) {
+// reload is passed to logf but does not crash the gateway — the previous key
+// remains active so in-flight tokens continue to work.
+func (m *Manager) StartKeyWatcher(ctx context.Context, keyPath string, interval time.Duration, logf func(string, ...any)) {
 	go func() {
 		t := time.NewTicker(interval)
 		defer t.Stop()
@@ -165,7 +169,7 @@ func (m *Manager) StartKeyWatcher(ctx context.Context, keyPath string, interval 
 				return
 			case <-t.C:
 				if err := m.ReloadKey(keyPath); err != nil {
-					log.Printf("JWT key reload failed (keeping previous key): %v", err)
+					logf("JWT key reload failed (keeping previous key): %v", err)
 				}
 			}
 		}
@@ -176,7 +180,7 @@ func (m *Manager) StartKeyWatcher(ctx context.Context, keyPath string, interval 
 // Returns the token string, its expiry time, and any error.
 func (m *Manager) MintToken(agentID, action, repo, requestName string) (string, time.Time, error) {
 	now := m.clock()
-	expiresAt := now.Add(30 * time.Minute)
+	expiresAt := now.Add(tokenTTL)
 
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -184,7 +188,7 @@ func (m *Manager) MintToken(agentID, action, repo, requestName string) (string, 
 			IssuedAt:  jwt.NewNumericDate(now),
 			Issuer:    "aip-gateway",
 			Subject:   agentID,
-			ID:        fmt.Sprintf("%s-%d", requestName, now.Unix()),
+			ID:        fmt.Sprintf("%s-%d", requestName, now.UnixNano()),
 		},
 		Action:  action,
 		Repo:    repo,
@@ -216,7 +220,7 @@ func (m *Manager) ValidateToken(tokenString string) (*Claims, error) {
 
 	// If current key fails and we're within 5 minutes of rotation,
 	// try the previous key to allow in-flight tokens to validate.
-	if len(prevPub) > 0 && m.clock().Sub(lastRotate) <= 5*time.Minute {
+	if len(prevPub) > 0 && m.clock().Sub(lastRotate) <= keyRotationGracePeriod {
 		claims, prevErr := m.validateWithKey(tokenString, prevPub)
 		if prevErr == nil {
 			return claims, nil

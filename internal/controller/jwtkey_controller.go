@@ -27,39 +27,46 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	"github.com/agent-control-plane/aip-k8s/internal/jwt"
 )
 
 const (
-	jwtKeySecretName   = "aip-jwt-signing-key"
-	jwtKeySecretKey    = "tls.key"
-	jwtKeySecretCert   = "tls.crt"
-	defaultRotationTTL = 90 * 24 * time.Hour // 90 days
-	requeueInterval    = 1 * time.Hour       // check every hour
+	jwtKeySecretName      = "aip-jwt-signing-key"
+	jwtKeySecretKey       = "tls.key"
+	jwtKeySecretCert      = "tls.crt"
+	annotationLastRotated = "aip.io/jwt-key-rotated-at"
+	defaultRotationTTL    = 90 * 24 * time.Hour
+	requeueInterval       = 1 * time.Hour
 )
 
 // JWTKeyReconciler ensures the aip-jwt-signing-key Secret exists with a valid
 // Ed25519 key pair, rotating it when the key exceeds RotationTTL.
 type JWTKeyReconciler struct {
 	client.Client
+	APIReader   client.Reader
 	Scheme      *runtime.Scheme
 	Namespace   string
 	RotationTTL time.Duration
 	Clock       func() time.Time
 }
 
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups="",resources=secrets,resourceNames=aip-jwt-signing-key,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=create
+// +kubebuilder:rbac:groups="",resources=secrets,resourceNames=aip-jwt-signing-key,verbs=get;list;watch;update;patch
 
 func (r *JWTKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	now := r.now()
 
 	var secret corev1.Secret
-	err := r.Get(ctx, types.NamespacedName{Name: jwtKeySecretName, Namespace: r.Namespace}, &secret)
+	err := r.APIReader.Get(ctx, types.NamespacedName{Name: jwtKeySecretName, Namespace: r.Namespace}, &secret)
 
 	if err != nil && !errors.IsNotFound(err) {
 		logger.Error(err, "Failed to get JWT signing key Secret")
@@ -72,13 +79,12 @@ func (r *JWTKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		needsRotation = true
 	} else if r.isStale(&secret, now) {
 		logger.Info("JWT signing key is stale, rotating",
-			"created", secret.CreationTimestamp.Time,
-			"age", now.Sub(secret.CreationTimestamp.Time))
+			"age", now.Sub(r.lastRotatedAt(&secret)))
 		needsRotation = true
 	}
 
 	if needsRotation {
-		if err := r.rotateKey(ctx); err != nil {
+		if err := r.rotateKey(ctx, now); err != nil {
 			logger.Error(err, "Failed to rotate JWT signing key")
 			return ctrl.Result{}, err
 		}
@@ -88,33 +94,51 @@ func (r *JWTKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	return ctrl.Result{RequeueAfter: requeueInterval}, nil
 }
 
-func (r *JWTKeyReconciler) isStale(secret *corev1.Secret, now time.Time) bool {
-	age := now.Sub(secret.CreationTimestamp.Time)
-	return age >= r.ttl()
+func (r *JWTKeyReconciler) lastRotatedAt(secret *corev1.Secret) time.Time {
+	if secret.Annotations != nil {
+		if raw, ok := secret.Annotations[annotationLastRotated]; ok {
+			if t, err := time.Parse(time.RFC3339, raw); err == nil {
+				return t
+			}
+		}
+	}
+	return secret.CreationTimestamp.Time
 }
 
-func (r *JWTKeyReconciler) rotateKey(ctx context.Context) error {
+func (r *JWTKeyReconciler) isStale(secret *corev1.Secret, now time.Time) bool {
+	return now.Sub(r.lastRotatedAt(secret)) >= r.ttl()
+}
+
+func (r *JWTKeyReconciler) rotateKey(ctx context.Context, now time.Time) error {
 	privatePEM, publicPEM, err := jwt.GenerateKeyPair()
 	if err != nil {
 		return fmt.Errorf("generate key pair: %w", err)
 	}
 
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      jwtKeySecretName,
-			Namespace: r.Namespace,
-		},
-		Type: corev1.SecretTypeTLS,
-		Data: map[string][]byte{
-			jwtKeySecretKey:  privatePEM,
-			jwtKeySecretCert: publicPEM,
-		},
+	newData := map[string][]byte{
+		jwtKeySecretKey:  privatePEM,
+		jwtKeySecretCert: publicPEM,
+	}
+	newAnnotations := map[string]string{
+		annotationLastRotated: now.Format(time.RFC3339),
 	}
 
 	var existing corev1.Secret
-	if err := r.Get(ctx, client.ObjectKeyFromObject(secret), &existing); err != nil {
+	if err := r.APIReader.Get(ctx, types.NamespacedName{Name: jwtKeySecretName, Namespace: r.Namespace}, &existing); err != nil {
 		if errors.IsNotFound(err) {
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        jwtKeySecretName,
+					Namespace:   r.Namespace,
+					Annotations: newAnnotations,
+				},
+				Type: corev1.SecretTypeOpaque,
+				Data: newData,
+			}
 			if err := r.Create(ctx, secret); err != nil {
+				if errors.IsAlreadyExists(err) {
+					return nil
+				}
 				return fmt.Errorf("create secret: %w", err)
 			}
 			return nil
@@ -122,9 +146,14 @@ func (r *JWTKeyReconciler) rotateKey(ctx context.Context) error {
 		return fmt.Errorf("get existing secret: %w", err)
 	}
 
-	existing.Data = secret.Data
-	if err := r.Update(ctx, &existing); err != nil {
-		return fmt.Errorf("update secret: %w", err)
+	base := existing.DeepCopy()
+	existing.Data = newData
+	if existing.Annotations == nil {
+		existing.Annotations = make(map[string]string)
+	}
+	existing.Annotations[annotationLastRotated] = now.Format(time.RFC3339)
+	if err := r.Patch(ctx, &existing, client.MergeFrom(base)); err != nil {
+		return fmt.Errorf("patch secret: %w", err)
 	}
 	return nil
 }
@@ -145,8 +174,22 @@ func (r *JWTKeyReconciler) now() time.Time {
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *JWTKeyReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Fire one startup reconcile so the controller creates the Secret immediately
+	// on first install — the informer only fires events for existing objects, so
+	// without this the Secret would never be created if it doesn't already exist.
+	startupCh := make(chan event.TypedGenericEvent[*corev1.Secret], 1)
+	startupCh <- event.TypedGenericEvent[*corev1.Secret]{
+		Object: &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: jwtKeySecretName, Namespace: r.Namespace},
+		},
+	}
+	close(startupCh)
+
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&corev1.Secret{}).
 		Named("jwtkey").
+		For(&corev1.Secret{}, builder.WithPredicates(predicate.NewPredicateFuncs(func(o client.Object) bool {
+			return o.GetName() == jwtKeySecretName && o.GetNamespace() == r.Namespace
+		}))).
+		WatchesRawSource(source.Channel(startupCh, &handler.TypedEnqueueRequestForObject[*corev1.Secret]{})).
 		Complete(r)
 }

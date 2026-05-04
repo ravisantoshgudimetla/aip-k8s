@@ -18,7 +18,20 @@ rules:
   resources:
   - secrets
   verbs:
+  - create
   - get
+- apiGroups:
+  - ""
+  resourceNames:
+  - aip-jwt-signing-key
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - apps
   resources:

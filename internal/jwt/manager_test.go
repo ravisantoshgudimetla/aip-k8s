@@ -2,6 +2,7 @@ package jwt
 
 import (
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
 	"os"
@@ -12,7 +13,7 @@ import (
 
 func writeTestPrivateKeyFile(t *testing.T, keyPath string) {
 	t.Helper()
-	_, priv, err := ed25519.GenerateKey(nil)
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}

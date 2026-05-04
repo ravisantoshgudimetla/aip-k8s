@@ -55,7 +55,7 @@ spec:
             - --admin-groups={{ .Values.gateway.auth.adminGroups }}
             {{- end }}
             {{- if .Values.gateway.jwtKeyPath }}
-            - --jwt-key-path={{ .Values.gateway.jwtKeyPath }}
+            - --jwt-key-path=/etc/aip/jwt/tls.key
             {{- end }}
           ports:
             - name: http

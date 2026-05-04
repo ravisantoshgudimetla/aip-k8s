@@ -58,6 +58,8 @@ var (
 		"Path to Ed25519 private key PEM file for JWT signing")
 )
 
+const defaultKeyWatchInterval = 5 * time.Minute
+
 func main() {
 	flag.Parse()
 
@@ -120,7 +122,7 @@ func main() {
 			log.Fatalf("Failed to load JWT key: %v", err)
 		}
 		log.Printf("JWT manager initialized with key: %s", *jwtKeyPath)
-		jwtMgr.StartKeyWatcher(ctx, *jwtKeyPath, 5*time.Minute)
+		jwtMgr.StartKeyWatcher(ctx, *jwtKeyPath, defaultKeyWatchInterval, log.Printf)
 	}
 
 	server := &Server{
