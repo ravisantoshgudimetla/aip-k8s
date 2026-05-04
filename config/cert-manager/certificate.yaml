@@ -5,6 +5,10 @@ metadata:
   namespace: aip-k8s-system
 spec:
   secretName: aip-jwt-signing-key
+  commonName: aip-jwt-signing-key
+  usages:
+    - digital signature
+    - key encipherment
   privateKey:
     algorithm: Ed25519
     encoding: PKCS8

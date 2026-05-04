@@ -123,7 +123,7 @@ func main() {
 		roles:                   rc,
 		authRequired:            authRequired,
 		requireGovernedResource: *requireGovernedResourceFlag,
-		jwtManager:             jwtMgr,
+		jwtManager:              jwtMgr,
 	}
 	mux := http.NewServeMux()
 

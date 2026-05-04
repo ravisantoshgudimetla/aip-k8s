@@ -8,7 +8,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -18,7 +17,6 @@ type JWTManager struct {
 	privateKey ed25519.PrivateKey
 	publicKey  ed25519.PublicKey
 	clock      func() time.Time
-	mu         sync.RWMutex
 }
 
 type AIPClaims struct {
@@ -68,11 +66,12 @@ func GenerateEd25519Key(path string) error {
 	if err != nil {
 		return fmt.Errorf("create key file: %w", err)
 	}
-	defer func() {
-		_ = file.Close()
-	}()
 	if err := pem.Encode(file, &pem.Block{Type: "PRIVATE KEY", Bytes: keyData}); err != nil {
+		_ = file.Close()
 		return fmt.Errorf("encode PEM: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close key file: %w", err)
 	}
 	return nil
 }
@@ -95,8 +94,6 @@ func (m *JWTManager) MintToken(agentID, action, repo, requestName string) (strin
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
-	m.mu.RLock()
-	defer m.mu.RUnlock()
 	signed, err := token.SignedString(m.privateKey)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("sign token: %w", err)

@@ -65,7 +65,7 @@ type Server struct {
 	roles                   *roleConfig
 	authRequired            bool
 	requireGovernedResource bool
-	jwtManager             *JWTManager
+	jwtManager              *JWTManager
 }
 
 type affectedTargetBody struct {
