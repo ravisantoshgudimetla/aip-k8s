@@ -98,6 +98,8 @@ func (r *JWTKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 func (r *JWTKeyReconciler) lastRotatedAt(secret *corev1.Secret) time.Time {
 	if secret.Annotations != nil {
 		if raw, ok := secret.Annotations[annotationLastRotated]; ok {
+			// Malformed annotation is intentionally ignored; fall back to
+			// CreationTimestamp so the controller still rotates on schedule.
 			if t, err := time.Parse(time.RFC3339, raw); err == nil {
 				return t
 			}
