@@ -1,0 +1,10 @@
+apiVersion: governance.aip.io/v1alpha1
+kind: GovernedResource
+metadata:
+  name: opslock-prod-deployments
+spec:
+  uriPattern: "k8s://prod/default/deployment/*"
+  permittedActions:
+    - scale
+  contextFetcher: none
+  description: "Production deployments with OpsLock concurrency control."

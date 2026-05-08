@@ -15,7 +15,7 @@ echo ""
 
 # ── Preflight checks ──────────────────────────────────────────────────────────
 
-echo "[ 1/6 ] Checking Kubernetes cluster..."
+echo "[ 1/7 ] Checking Kubernetes cluster..."
 if ! kubectl cluster-info > /dev/null 2>&1; then
   echo "  ✗ No Kubernetes cluster found. Start KIND:"
   echo "    kind create cluster"
@@ -23,15 +23,26 @@ if ! kubectl cluster-info > /dev/null 2>&1; then
 fi
 echo "  ✓ Cluster ready"
 
-echo "[ 2/6 ] Checking AIP Gateway at ${GATEWAY_URL}..."
+echo "[ 2/7 ] Checking AIP CRDs..."
+if ! kubectl get crd governedresources.governance.aip.io > /dev/null 2>&1; then
+  echo "  ✗ AIP CRDs not installed."
+  echo "    Install them: kubectl apply -k ${ROOT_DIR}/config/crd/bases"
+  exit 1
+fi
+echo "  ✓ CRDs installed"
+
+echo "[ 3/7 ] Checking AIP Gateway at ${GATEWAY_URL}..."
 if ! curl -sf "${GATEWAY_URL}/healthz" > /dev/null; then
   echo "  ✗ Gateway not running. Start it:"
   echo "    go run ${ROOT_DIR}/cmd/gateway/main.go"
+  echo ""
+  echo "    Controller must also be running:"
+  echo "    go run ${ROOT_DIR}/cmd/controller/main.go"
   exit 1
 fi
 echo "  ✓ Gateway running"
 
-echo "[ 3/6 ] Checking AIP Dashboard at ${DASHBOARD_URL}..."
+echo "[ 4/7 ] Checking AIP Dashboard at ${DASHBOARD_URL}..."
 if ! curl -sf "${DASHBOARD_URL}" > /dev/null 2>&1; then
   echo "  ✗ Dashboard not running. Start it:"
   echo "    go run ${ROOT_DIR}/cmd/dashboard/main.go"
@@ -39,12 +50,14 @@ if ! curl -sf "${DASHBOARD_URL}" > /dev/null 2>&1; then
 fi
 echo "  ✓ Dashboard running"
 
-echo "[ 4/6 ] Cleaning up any leftovers from previous runs..."
+echo "[ 5/7 ] Cleaning up any leftovers from previous runs..."
 kubectl delete agentrequests --all -n "${NAMESPACE}" --ignore-not-found > /dev/null 2>&1 || true
 kubectl delete -f "${DEMO_DIR}/k8s/payment-api.yaml" --namespace "${NAMESPACE}" --ignore-not-found > /dev/null 2>&1 || true
 echo "  ✓ Clean slate"
 
-echo "[ 5/6 ] Deploying payment-api (3 replicas) to cluster..."
+echo "[ 6/7 ] Applying GovernedResource and deploying payment-api (3 replicas)..."
+kubectl apply -f "${DEMO_DIR}/k8s/resource.yaml" > /dev/null
+echo "  ✓ GovernedResource (scaledown-prod-deployments) applied — contextFetcher: k8s-deployment"
 kubectl apply -f "${DEMO_DIR}/k8s/payment-api.yaml" --namespace "${NAMESPACE}" > /dev/null
 echo "  Waiting for pods to be ready..."
 kubectl rollout status deployment/payment-api -n "${NAMESPACE}" --timeout=90s
@@ -55,7 +68,7 @@ else
   echo "  ⚠ payment-api deployed but endpoints not yet active — wait a few seconds"
 fi
 
-echo "[ 6/6 ] Applying live-traffic-guard SafetyPolicy..."
+echo "[ 7/7 ] Applying live-traffic-guard SafetyPolicy..."
 kubectl apply -f "${DEMO_DIR}/policies/live-traffic-guard.yaml" --namespace "${NAMESPACE}" > /dev/null
 echo "  ✓ live-traffic-guard active"
 
@@ -104,4 +117,10 @@ fi
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  Demo complete. Re-run ./demo/scaledown/run.sh to replay."
+echo ""
+echo "  To clean up:"
+echo "    kubectl delete agentrequests,auditrecords --all -n ${NAMESPACE}"
+echo "    kubectl delete safetypolicy live-traffic-guard -n ${NAMESPACE}"
+echo "    kubectl delete governedresource scaledown-prod-deployments"
+echo "    kubectl delete deployment payment-api -n ${NAMESPACE} --ignore-not-found"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

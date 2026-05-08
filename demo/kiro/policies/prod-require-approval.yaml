@@ -4,8 +4,6 @@ metadata:
   name: prod-require-approval
   namespace: default
 spec:
-  targetSelector:
-    matchActions: ["deploy", "kiro/deploy"] # Scope to deploy actions only
   rules:
     - name: production-guard
       type: StateEvaluation

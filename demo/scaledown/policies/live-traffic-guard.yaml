@@ -4,9 +4,6 @@ metadata:
   name: live-traffic-guard
   namespace: default
 spec:
-  targetSelector:
-    matchActions: ["delete", "deleted", "scale", "scale-down", "escalate"]
-
   rules:
     # Deny autonomous deletion of any resource with active endpoints.
     # The agent cannot unilaterally delete a live service — this is terminal.

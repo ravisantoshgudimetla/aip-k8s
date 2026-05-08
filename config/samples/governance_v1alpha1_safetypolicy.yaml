@@ -1,28 +1,45 @@
 apiVersion: governance.aip.io/v1alpha1
 kind: SafetyPolicy
 metadata:
-  labels:
-    app.kubernetes.io/name: aip-k8s
-    app.kubernetes.io/managed-by: kustomize
-  name: safetypolicy-sample
+  name: prod-safety-policy
+  namespace: default
 spec:
-  targetSelector:
-    matchAttributes:
-      environment: "production"
-    matchResourceTypes:
-      - "Deployment"
-    matchActions:
-      - "delete"
-      - "scale"
+  # Optional: scope this policy to GovernedResources matching these labels.
+  # Empty means the policy applies to all agent requests in this namespace.
+  # governedResourceSelector:
+  #   matchLabels:
+  #     env: production
+
+  # Optional: restrict CEL expressions that reference context.* fields to a
+  # specific context type (e.g. "k8s"). Must match GovernedResource.spec.contextFetcher.
+  # contextType: k8s
+
   rules:
-    - name: "deny-scale-above-max"
-      type: "StateEvaluation"
-      action: "Deny"
-      message: "Scaling above 10 replicas requires manual approval"
-      expression: "has(request.parameters) && request.parameters.replicas <= 10"
-    - name: "log-all-production-changes"
-      type: "StateEvaluation"
-      action: "Log"
-      message: "Logging all production mutations for audit"
-      expression: "true"
-  failureMode: "FailClosed"
+    # Deny autonomous deletion of any resource with live traffic.
+    # Requires contextFetcher: k8s on the GovernedResource to populate target.*.
+    - name: deny-delete-with-live-traffic
+      type: StateEvaluation
+      action: Deny
+      message: "Autonomous deletion blocked: resource has active endpoints. Escalate to a human reviewer."
+      expression: >
+        request.spec.action == "delete" &&
+        (target.hasActiveEndpoints == true || target.readyReplicas > 0)
+
+    # Require human approval for any production deployment.
+    - name: require-approval-for-prod-deploy
+      type: StateEvaluation
+      action: RequireApproval
+      expression: 'request.spec.target.uri.startsWith("k8s://prod")'
+
+    # Require human approval when agent confidence is low.
+    - name: low-confidence-gate
+      type: StateEvaluation
+      action: RequireApproval
+      message: "Agent confidence below threshold — human review required before execution."
+      expression: >
+        has(request.spec.reasoningTrace) &&
+        request.spec.reasoningTrace.confidenceScore < 0.7
+
+  # FailClosed: if policy evaluation fails (e.g. context fetch error), deny the request.
+  # FailOpen: allow the request through on evaluation error.
+  failureMode: FailClosed

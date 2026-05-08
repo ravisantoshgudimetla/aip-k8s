@@ -51,7 +51,8 @@ type GovernedResourceSpec struct {
 	// Supported values: "karpenter", "github", "k8s-deployment", "none"
 	// +kubebuilder:validation:Enum=karpenter;github;k8s-deployment;none
 	// +kubebuilder:default=none
-	ContextFetcher string `json:"contextFetcher"`
+	// +optional
+	ContextFetcher string `json:"contextFetcher,omitempty"`
 
 	// ContextSchema is an OpenAPI schema (restricted subset) describing the JSON
 	// object the ContextFetcher returns. SafetyPolicy CEL rules that reference

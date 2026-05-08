@@ -2,38 +2,38 @@ apiVersion: governance.aip.io/v1alpha1
 kind: GovernedResource
 metadata:
   # GovernedResource is cluster-scoped — no namespace.
-  name: karpenter-nodepools
+  name: prod-deployments
 spec:
   # Glob pattern matched against AgentRequest.spec.target.uri.
   # ** crosses path separators; * does not.
-  uriPattern: "k8s://prod/karpenter/nodepool/*"
+  uriPattern: "k8s://prod/default/deployment/*"
 
   # Only these action strings are accepted. Requests with other actions are
-  # rejected at admission before any trust gate evaluation.
+  # rejected before any policy evaluation.
   permittedActions:
+    - deploy
     - scale-up
     - scale-down
+    - restart
 
   # Optional: restrict to specific agent identities. Empty means any
   # authenticated agent may target this resource.
   permittedAgents:
-    - karpenter-nodepool-agent
+    - deploy-agent
 
-  # Populates live cluster state for reviewers on the dashboard.
-  contextFetcher: karpenter
+  # Populates live Kubernetes state (readyReplicas, hasActiveEndpoints, etc.)
+  # for SafetyPolicy CEL expressions that reference target.* fields.
+  # Use "none" when policies only reference request.spec.* fields.
+  contextFetcher: k8s
 
-  description: "Karpenter NodePool scaling. Requires SRE approval at Supervised level."
+  description: "Production deployments. Requires human approval for any scaling or deployment action."
 
   # Trust requirements enforce a floor and ceiling on agent autonomy for this
   # resource, independent of what the AgentGraduationPolicy permits globally.
   #
-  # minTrustLevel: agents below this level cannot execute against this resource.
-  #   Observer-mode requests (graded but not executed) always bypass this check.
-  #
-  # maxAutonomyLevel: caps the effective autonomy even for highly-trusted agents.
-  #   A Trusted or Autonomous agent is treated as Supervised for this resource,
-  #   meaning human approval is always required for nodepool changes.
-  #   Raise this ceiling only after reviewing the agent's execution history.
+  # minTrustLevel: agents below this level cannot target this resource.
+  # maxAutonomyLevel: caps effective autonomy — a Trusted agent is treated as
+  #   Supervised here, so human approval is always required.
   trustRequirements:
     minTrustLevel: Supervised
     maxAutonomyLevel: Supervised
