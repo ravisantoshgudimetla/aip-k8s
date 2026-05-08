@@ -11,6 +11,12 @@ import (
 	"time"
 )
 
+const (
+	pollInterval    = 1 * time.Second
+	workSimDuration = 10 * time.Second
+	httpTimeout     = 5 * time.Second
+)
+
 type denial struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -22,16 +28,20 @@ type pollStatus struct {
 	AuditEvents []string `json:"auditEvents"`
 }
 
-func poll(gateway, name, namespace string) pollStatus {
+var httpClient = &http.Client{Timeout: httpTimeout}
+
+func poll(gateway, name, namespace string) (pollStatus, error) {
 	url := fmt.Sprintf("%s/agent-requests/%s?namespace=%s", gateway, name, namespace)
-	resp, err := http.Get(url)
+	resp, err := httpClient.Get(url)
 	if err != nil {
-		log.Fatalf("Failed to poll status: %v", err)
+		return pollStatus{}, fmt.Errorf("polling %s: %w", name, err)
 	}
 	var s pollStatus
 	_ = json.NewDecoder(resp.Body).Decode(&s)
-	_ = resp.Body.Close()
-	return s
+	if err := resp.Body.Close(); err != nil {
+		return s, fmt.Errorf("closing poll response body: %w", err)
+	}
+	return s, nil
 }
 
 var auditIcons = map[string]string{
@@ -86,7 +96,7 @@ func main() {
 	}
 	b, _ := json.Marshal(body)
 
-	resp, err := http.Post(*gateway+"/agent-requests", "application/json", bytes.NewBuffer(b))
+	resp, err := httpClient.Post(*gateway+"/agent-requests", "application/json", bytes.NewBuffer(b))
 	if err != nil {
 		logger.Fatalf("Failed to reach AIP Gateway: %v", err)
 	}
@@ -109,12 +119,15 @@ func main() {
 	// Poll until the controller resolves the request.
 	var status pollStatus
 	for {
-		status = poll(*gateway, arResp.Name, *namespace)
+		status, err = poll(*gateway, arResp.Name, *namespace)
+		if err != nil {
+			logger.Fatalf("Poll error: %v", err)
+		}
 		switch status.Phase {
 		case "Approved", "Denied", "Failed", "Expired":
 			goto resolved
 		}
-		time.Sleep(1 * time.Second)
+		time.Sleep(pollInterval)
 	}
 resolved:
 
@@ -136,7 +149,7 @@ resolved:
 	logger.Printf("✓ Approved — OpsLock acquired, signalling Executing...")
 
 	execURL := fmt.Sprintf("%s/agent-requests/%s/executing?namespace=%s", *gateway, arResp.Name, *namespace)
-	execResp, err := http.Post(execURL, "application/json", nil)
+	execResp, err := httpClient.Post(execURL, "application/json", nil)
 	if err != nil {
 		logger.Fatalf("Failed to signal executing: %v", err)
 	}
@@ -148,10 +161,10 @@ resolved:
 	}
 	_ = execResp.Body.Close()
 
-	time.Sleep(10 * time.Second)
+	time.Sleep(workSimDuration)
 
 	compURL := fmt.Sprintf("%s/agent-requests/%s/completed?namespace=%s", *gateway, arResp.Name, *namespace)
-	compResp, err := http.Post(compURL, "application/json", nil)
+	compResp, err := httpClient.Post(compURL, "application/json", nil)
 	if err != nil {
 		logger.Fatalf("Failed to signal completed: %v", err)
 	}
@@ -164,7 +177,7 @@ resolved:
 	_ = compResp.Body.Close()
 
 	// Fetch final audit trail after completion so lock.released is included.
-	final := poll(*gateway, arResp.Name, *namespace)
+	final, _ := poll(*gateway, arResp.Name, *namespace)
 	printAuditTrail(logger, final.AuditEvents)
 	logger.Printf("✓ Completed — OpsLock released")
 }

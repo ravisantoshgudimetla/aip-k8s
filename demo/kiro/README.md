@@ -55,8 +55,8 @@ controller is involved.
 ## Prerequisites
 
 - Kubernetes cluster with AIP CRDs installed
-- Gateway running locally: `go run ./cmd/`
-- Controller running locally: `go run ./cmd/`
+- Gateway running locally: `go run ./cmd/gateway/`
+- Controller running locally: `go run ./cmd/controller/`
 - **No in-cluster AIP controller** — two controllers produce duplicate audit records.
   Remove any deployed controller first:
   ```bash

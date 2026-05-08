@@ -3,7 +3,7 @@ kind: GovernedResource
 metadata:
   name: opslock-prod-deployments
 spec:
-  uriPattern: "k8s://prod/default/deployment/*"
+  uriPattern: "k8s://prod/default/deployment/payment-*"
   permittedActions:
     - scale
   contextFetcher: none

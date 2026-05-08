@@ -23,13 +23,13 @@ spec:
       message: "Autonomous deletion blocked: resource has active endpoints. Escalate to a human reviewer."
       expression: >
         request.spec.action == "delete" &&
-        (target.hasActiveEndpoints == true || target.readyReplicas > 0)
+        target != null && (target.hasActiveEndpoints || target.readyReplicas > 0)
 
     # Require human approval for any production deployment.
     - name: require-approval-for-prod-deploy
       type: StateEvaluation
       action: RequireApproval
-      expression: 'request.spec.target.uri.startsWith("k8s://prod")'
+      expression: 'has(request.spec.target) && has(request.spec.target.uri) && request.spec.target.uri.startsWith("k8s://prod")'
 
     # Require human approval when agent confidence is low.
     - name: low-confidence-gate

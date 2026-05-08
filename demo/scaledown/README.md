@@ -30,7 +30,7 @@ live verification is surfaced explicitly.
 
 | AIP capability | Where it appears |
 |---|---|
-| Live cluster state verification | `contextFetcher: k8s` on GovernedResource |
+| Live cluster state verification | `contextFetcher: k8s-deployment` on GovernedResource |
 | CEL state evaluation policies | `live-traffic-guard` SafetyPolicy |
 | Agent world model correction | Denial message surfaces AIP's live verification |
 | Human escalation path | `action: escalate` triggers RequireApproval |
@@ -39,7 +39,7 @@ live verification is surfaced explicitly.
 
 ## Policies in play
 
-The `live-traffic-guard` SafetyPolicy applies three rules:
+The `live-traffic-guard` SafetyPolicy applies four rules:
 
 | Rule | Trigger | Action |
 |---|---|---|
