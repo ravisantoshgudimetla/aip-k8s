@@ -403,7 +403,7 @@ func (r *AgentTrustProfileReconciler) emitTrustProfileAuditWithRetry(ctx context
 	now := r.now()
 	audit := &governancev1alpha1.AuditRecord{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      deterministicAuditName(profile.Name, eventType, now),
+			Name:      deterministicAuditName(profile.Name, eventType, oldLevel, newLevel),
 			Namespace: profile.Namespace,
 			Labels: map[string]string{
 				"aip.io/agentIdentity": profile.Spec.AgentIdentity,

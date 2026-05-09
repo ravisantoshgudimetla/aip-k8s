@@ -103,11 +103,11 @@ func (r *AgentRequestReconciler) now() time.Time {
 }
 
 // deterministicAuditName generates a stable, DNS-compliant name for an AuditRecord
-// based on its identity. This allows AlreadyExists to fire correctly on retry,
-// preventing duplicate records when the first Create succeeds server-side but the
-// response is lost.
-func deterministicAuditName(agentReqName, eventType string, ts time.Time) string {
-	input := agentReqName + "|" + eventType + "|" + ts.Format(time.RFC3339Nano)
+// based on the resource name, event type, and the state transition (stateA→stateB).
+// Using state instead of time means retries for the same transition produce the same
+// name, so AlreadyExists fires correctly instead of creating a duplicate record.
+func deterministicAuditName(resourceName, eventType, stateA, stateB string) string {
+	input := resourceName + "|" + eventType + "|" + stateA + "|" + stateB
 	hash := sha256.Sum256([]byte(input))
 	return fmt.Sprintf("%x", hash)[:53]
 }
@@ -348,6 +348,34 @@ func (r *AgentRequestReconciler) initializePhase(
 		return false, nil
 	}
 
+	// Gateway-denied: request was blocked at admission before policy evaluation.
+	// Transition directly to Denied and emit a request.denied AuditRecord so that
+	// scope escalation attempts are visible in the audit trail.
+	if denialCode, ok := agentReq.Annotations[governancev1alpha1.AnnotationGatewayDenied]; ok && denialCode != "" {
+		log.FromContext(ctx).Info("Transitioning gateway-denied AgentRequest to Denied", "name", agentReq.Name, "code", denialCode)
+		base := agentReq.DeepCopy()
+		agentReq.Status.Phase = governancev1alpha1.PhaseDenied
+		agentReq.Status.Denial = &governancev1alpha1.DenialResponse{
+			Code:    denialCode,
+			Message: fmt.Sprintf("Blocked at gateway admission: %s", denialCode),
+		}
+		agentRequestDeniedTotal.WithLabelValues(denialCode).Inc()
+		agentRequestTotal.WithLabelValues(governancev1alpha1.PhaseDenied).Inc()
+		meta.SetStatusCondition(&agentReq.Status.Conditions, metav1.Condition{
+			Type:    "RequestSubmitted",
+			Status:  metav1.ConditionTrue,
+			Reason:  "GatewayDenied",
+			Message: fmt.Sprintf("Blocked at gateway admission: %s", denialCode),
+		})
+		if err := r.Status().Patch(ctx, agentReq, client.MergeFrom(base)); err != nil {
+			return false, err
+		}
+		if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventRequestDenied, "", governancev1alpha1.PhaseDenied); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
 	// Observe-mode requests are recorded as observations only; they skip
 	// SafetyPolicy eval, OpsLock, and human approval and are immediately terminal.
 	if agentReq.Spec.Mode == governancev1alpha1.ModeObserve {
@@ -559,11 +587,13 @@ func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, agentReq 
 		policyEvalLabels["aip.io/correlationID"] = corrID
 	}
 
+	// Capture fromPhase before any mutations; used as stable name anchor.
+	evalFromPhase := agentReq.Status.Phase
 	now := r.now()
 
 	policyEvalAudit := &governancev1alpha1.AuditRecord{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      deterministicAuditName(agentReq.Name, governancev1alpha1.AuditEventPolicyEvaluated, now),
+			Name:      deterministicAuditName(agentReq.Name, governancev1alpha1.AuditEventPolicyEvaluated, evalFromPhase, ""),
 			Namespace: agentReq.Namespace,
 			Labels:    policyEvalLabels,
 		},
@@ -700,6 +730,13 @@ func (r *AgentRequestReconciler) handleEvaluationResult(ctx context.Context, age
 
 	// Now emit the audit record(s) safely. Using a dedicated patch for the audit creation
 	// to ensure we don't return from handleLockAcquisition without the audit trace.
+	// Attach the phase transition to the policy.evaluated record so the audit
+	// trail shows a single rich record per evaluation (not one per-detail + one per-transition).
+	policyEvalAudit.Spec.PhaseTransition = &governancev1alpha1.PhaseTransition{
+		From: fromPhase,
+		To:   agentReq.Status.Phase,
+	}
+
 	if err := r.createAuditWithRetry(ctx, policyEvalAudit); err != nil {
 		logger.Error(err, "Failed to create policy.evaluated AuditRecord after retries")
 	}
@@ -712,10 +749,6 @@ func (r *AgentRequestReconciler) handleEvaluationResult(ctx context.Context, age
 	}
 
 	if result.Action == governancev1alpha1.ResultRequireApproval {
-		// Emit record for entering manual approval phase
-		if err := r.emitAuditRecord(ctx, agentReq, governancev1alpha1.AuditEventPolicyEvaluated, fromPhase, agentReq.Status.Phase); err != nil {
-			return ctrl.Result{}, err
-		}
 		return ctrl.Result{}, nil
 	}
 
@@ -1094,7 +1127,9 @@ func (r *AgentRequestReconciler) emitAuditRecord(ctx context.Context, req *gover
 
 	audit := &governancev1alpha1.AuditRecord{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      deterministicAuditName(req.Name, eventType, now),
+			// Use fromPhase+toPhase (not time) so retries of the same transition
+			// produce the same name, letting AlreadyExists fire correctly.
+			Name:      deterministicAuditName(req.Name, eventType, fromPhase, toPhase),
 			Namespace: req.Namespace,
 			Labels:    auditLabels,
 		},
@@ -1130,6 +1165,9 @@ func (r *AgentRequestReconciler) emitAuditRecord(ctx context.Context, req *gover
 	}
 
 	if err := r.Create(ctx, audit); err != nil {
+		if errors.IsAlreadyExists(err) {
+			return nil
+		}
 		log.FromContext(ctx).Error(err, "Failed to create AuditRecord")
 		return err
 	}

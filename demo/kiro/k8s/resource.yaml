@@ -1,0 +1,10 @@
+apiVersion: governance.aip.io/v1alpha1
+kind: GovernedResource
+metadata:
+  name: kiro-prod-deployments
+spec:
+  uriPattern: "k8s://prod/default/deployment/*"
+  permittedActions:
+    - kiro/deploy
+  contextFetcher: none
+  description: "Production deployments governed by Kiro deployment policies."

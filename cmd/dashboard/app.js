@@ -172,7 +172,7 @@ async function loadIdentity() {
         updateRoleUI(data.role || '');
         // If whoami succeeded without a manually stored token, the auth proxy
         // is injecting credentials — set proxyAuth and hide the token UI.
-        if (!getToken() && data.identity && data.identity !== 'unknown') {
+        if (!getToken() && data.identity && data.role) {
             state.proxyAuth = true;
             const btn = document.getElementById('token-btn');
             if (btn) btn.style.display = 'none';
@@ -251,17 +251,15 @@ async function fetchRequests() {
 }
 
 async function fetchAuditRecords(name) {
-    // Clear immediately so the details pane doesn't show stale records from a
-    // previously selected request while the new fetch is in flight.
-    state.auditRecords = [];
-    renderDetails();
     const req = state.requests.find(r => r.metadata.name === name);
     const ns = req?.metadata?.namespace || 'default';
     try {
         const response = await apiFetch(
             `/api/audit-records?agentRequest=${encodeURIComponent(name)}&namespace=${encodeURIComponent(ns)}`);
         if (!response.ok) return;
-        state.auditRecords = await response.json();
+        const records = await response.json();
+        if (state.selectedRequest?.metadata?.name !== name) return;
+        state.auditRecords = records;
         renderDetails();
     } catch (err) {
         console.error('Failed to fetch audit records:', err);
@@ -356,7 +354,7 @@ function renderList() {
         return;
     }
 
-    listEl.innerHTML = state.requests.map(req => {
+    const newHTML = state.requests.map(req => {
         const isActive = state.selectedRequest && state.selectedRequest.metadata.name === req.metadata.name;
         const phase = req.status?.phase || 'Pending';
         const time = new Date(req.metadata.creationTimestamp).toLocaleTimeString();
@@ -374,6 +372,7 @@ function renderList() {
             </div>
         `;
     }).join('');
+    if (listEl.innerHTML !== newHTML) listEl.innerHTML = newHTML;
 }
 
 window.selectRequestById = (name) => {
@@ -529,11 +528,18 @@ function renderProviderContext(ctx) {
 
 function renderGovernanceTimeline(phase, needsApproval) {
     const isSoak = phase === 'AwaitingVerdict' || (phase === 'Completed' && state.selectedRequest?.status?.verdict);
-    
+    const hasLockEvent = state.auditRecords.some(r => r.spec?.event === 'lock.acquired' || r.spec?.event === 'lock.released' || r.spec?.event === 'lock.expired');
+    const isLockDenied = phase === 'Denied' && state.selectedRequest?.status?.denial?.code?.startsWith('LOCK_');
+
     const steps = isSoak ? [
         { label: 'Intent declared',  done: true },
         { label: 'Policy evaluated', done: true },
         { label: 'Human grade',      done: phase === 'Completed', active: phase === 'AwaitingVerdict' },
+    ] : hasLockEvent || isLockDenied ? [
+        { label: 'Intent declared',  done: true },
+        { label: 'Policy evaluated', done: true },
+        { label: 'OpsLock',          done: hasLockEvent || ['Approved','Executing','Completed'].includes(phase), active: phase === 'Pending', denied: isLockDenied },
+        { label: 'Action executed',  done: phase === 'Completed', active: phase === 'Executing' },
     ] : [
         { label: 'Intent declared',  done: true },
         { label: 'Policy evaluated', done: true },
@@ -587,7 +593,11 @@ function renderDetails() {
     }
 
     const phase = req.status?.phase || 'Pending';
-    const auditLogs = [...state.auditRecords].sort((a, b) => new Date(a.spec.timestamp) - new Date(b.spec.timestamp));
+    const auditLogs = [...state.auditRecords].sort((a, b) => {
+        const tDiff = new Date(a.spec.timestamp) - new Date(b.spec.timestamp);
+        if (tDiff !== 0) return tDiff;
+        return parseInt(a.metadata.resourceVersion || '0') - parseInt(b.metadata.resourceVersion || '0');
+    });
     const needsApproval = phase === 'Pending' && req.status?.conditions?.some(c => c.type === 'RequiresApproval' && c.status === 'True');
     const isReviewer = state.role === 'reviewer' || state.role === 'admin';
     const reason = req.spec.reason || 'No reason provided.';
@@ -731,6 +741,25 @@ function renderDetails() {
             ${auditLogs.length === 0
                 ? '<div style="color:var(--text-secondary);font-size:0.85rem;">No audit records yet</div>'
                 : auditLogs.map(log => {
+                    const auditIcons = {
+                        'request.submitted':  '📥',
+                        'request.approved':   '✅',
+                        'request.denied':     '🚫',
+                        'request.executing':  '▶️',
+                        'request.completed':  '✅',
+                        'request.failed':     '❌',
+                        'request.expired':    '⏰',
+                        'request.observed':   '👁️',
+                        'policy.evaluated':   '⚖️',
+                        'lock.acquired':      '🔒',
+                        'lock.released':      '🔓',
+                        'lock.expired':       '⏰',
+                        'verdict.submitted':  '🏛️',
+                        'cascade.mismatch':   '⚠️',
+                        'heartbeat.timeout':  '💔',
+                        'state.drifted':      '⚠️',
+                    };
+                    const icon = auditIcons[log.spec.event] || '○';
                     // G-11: policyGeneration in denial events
                     const policyResults = log.spec.policyResults?.length
                         ? `<div style="margin-top:0.3rem;font-size:0.72rem;color:var(--text-secondary);">` +
@@ -741,6 +770,7 @@ function renderDetails() {
                     return `
                     <div class="audit-item">
                         <span class="time">${new Date(log.spec.timestamp).toLocaleTimeString()}</span>
+                        <span style="margin-right:0.35rem;">${icon}</span>
                         <span style="font-weight:600;color:var(--accent-color);">${escapeHtml(log.spec.event)}</span>
                         ${log.spec.phaseTransition ? `
                             <span style="color:var(--text-secondary);">&nbsp;(${escapeHtml(log.spec.phaseTransition.from)} &rarr; ${escapeHtml(log.spec.phaseTransition.to)})</span>
@@ -1066,14 +1096,20 @@ window.openGRForm = async function(name) {
 
 window.submitGRForm = async function(name) {
     const split = s => s.split(',').map(v => v.trim()).filter(Boolean);
-    const body = {
-        name: document.getElementById('gr-name').value.trim(),
+    const fetcher = document.getElementById('gr-fetcher').value;
+    const spec = {
         uriPattern: document.getElementById('gr-pattern').value.trim(),
         permittedActions: split(document.getElementById('gr-actions').value),
         permittedAgents: split(document.getElementById('gr-agents').value),
-        contextFetcher: document.getElementById('gr-fetcher').value,
         description: document.getElementById('gr-desc').value.trim(),
         soakMode: document.getElementById('gr-soak').checked,
+    };
+    if (fetcher && fetcher !== 'none') {
+        spec.contextFetcher = fetcher;
+    }
+    const body = {
+        metadata: { name: document.getElementById('gr-name').value.trim() },
+        spec,
     };
 
     const method = name ? 'PUT' : 'POST';

@@ -48,4 +48,10 @@ const (
 	// AnnotationCanExecute is set by the gateway to indicate whether the agent's
 	// trust level permits execution of the request.
 	AnnotationCanExecute = "governance.aip.io/can-execute"
+
+	// AnnotationGatewayDenied is set by the gateway on an AgentRequest when the
+	// request is blocked at admission (e.g., action not in permittedActions). The
+	// controller reads this on first reconcile and transitions directly to Denied,
+	// emitting a request.denied AuditRecord without running policy evaluation.
+	AnnotationGatewayDenied = "governance.aip.io/gateway-denied"
 )

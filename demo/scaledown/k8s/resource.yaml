@@ -1,0 +1,13 @@
+apiVersion: governance.aip.io/v1alpha1
+kind: GovernedResource
+metadata:
+  name: scaledown-prod-deployments
+spec:
+  uriPattern: "k8s://prod/default/deployment/*"
+  permittedActions:
+    - delete
+    - scale
+    - scale-down
+    - escalate
+  contextFetcher: k8s-deployment
+  description: "Production deployments — live Kubernetes state fetched for safety policy evaluation."

@@ -143,7 +143,6 @@ spec:
                 minLength: 1
                 type: string
             required:
-            - contextFetcher
             - permittedActions
             - uriPattern
             type: object

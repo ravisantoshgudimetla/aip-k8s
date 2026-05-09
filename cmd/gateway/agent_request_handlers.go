@@ -165,6 +165,20 @@ func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request
 	// Check action (step 4 in design doc).
 	actionPermitted = slices.Contains(matchedGR.Spec.PermittedActions, body.Action)
 	if !actionPermitted {
+		// Create an AgentRequest with the gateway-denied annotation so the controller
+		// emits a request.denied AuditRecord — scope escalation attempts must be visible
+		// in the audit trail even though no K8s resource would otherwise be created.
+		agentReq.Spec.GovernedResourceRef = &v1alpha1.GovernedResourceRef{
+			Name:       matchedGR.Name,
+			Generation: matchedGR.Generation,
+		}
+		if agentReq.Annotations == nil {
+			agentReq.Annotations = make(map[string]string)
+		}
+		agentReq.Annotations[v1alpha1.AnnotationGatewayDenied] = v1alpha1.DenialCodeActionNotPermitted
+		if err := s.client.Create(r.Context(), agentReq); err != nil {
+			log.Printf("failed to create gateway-denied AgentRequest for audit trail: %v", err)
+		}
 		writeError(w, http.StatusForbidden, v1alpha1.DenialCodeActionNotPermitted)
 		return
 	}
@@ -379,7 +393,7 @@ func (s *Server) handleExecutingAgentRequest(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if req.Spec.AgentIdentity != sub {
+	if s.authRequired && req.Spec.AgentIdentity != sub {
 		writeError(w, http.StatusForbidden, "forbidden: only the creating agent may transition this request")
 		return
 	}
@@ -422,7 +436,7 @@ func (s *Server) handleCompletedAgentRequest(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if req.Spec.AgentIdentity != sub {
+	if s.authRequired && req.Spec.AgentIdentity != sub {
 		writeError(w, http.StatusForbidden, "forbidden: only the creating agent may transition this request")
 		return
 	}
