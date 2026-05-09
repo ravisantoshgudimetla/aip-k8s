@@ -36,6 +36,7 @@
 
             <nav class="tab-bar">
                 <button id="tab-requests" class="tab-button active" onclick="showTab('requests')">Agent Requests</button>
+                <button id="tab-trust-profiles" class="tab-button" onclick="showTab('trust-profiles')">Trust Profiles</button>
                 <button id="tab-governed-resources" class="tab-button admin-only" style="display:none" onclick="showTab('governed-resources')">Governed Resources</button>
                 <button id="tab-safety-policies" class="tab-button admin-only" style="display:none" onclick="showTab('safety-policies')">Safety Policies</button>
             </nav>
@@ -73,6 +74,30 @@
                             </div>
                         </div>
                     </main>
+                </div>
+            </div>
+
+            <!-- Trust Profiles tab -->
+            <div id="trust-profiles-view" style="display:none">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:0.75rem 1rem;border-bottom:1px solid var(--border-color);">
+                    <span style="font-size:0.9rem;font-weight:600;">Agent Trust Profiles</span>
+                    <div style="display:flex;align-items:center;gap:0.4rem;">
+                        <label for="tp-ns-input" style="font-size:0.78rem;color:var(--text-secondary);white-space:nowrap;">Namespace</label>
+                        <input id="tp-ns-input" type="text" value="default"
+                            style="font-size:0.78rem;padding:0.25rem 0.5rem;background:var(--surface-color);border:1px solid var(--border-color);border-radius:4px;color:var(--text-primary);width:110px;"
+                            onchange="loadTrustProfiles()"
+                            onkeydown="if(event.key==='Enter')loadTrustProfiles()" />
+                    </div>
+                </div>
+                <div class="diagnostics-table-container">
+                    <table class="diagnostics-table">
+                        <thead>
+                            <tr><th>Agent Identity</th><th>Trust Level</th><th>Recent Accuracy</th><th>Total Reviewed</th><th>Total Executions</th><th>Last Evaluated</th></tr>
+                        </thead>
+                        <tbody id="trust-profiles-list">
+                            <tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--text-secondary);">Loading...</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
