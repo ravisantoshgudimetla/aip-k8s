@@ -112,11 +112,39 @@ else
     --namespace "${NAMESPACE}"
 fi
 
-# ── Cleanup prompt ────────────────────────────────────────────────────────────
+# ── Submit verdicts and show trust profile ───────────────────────────────────
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Grading agent diagnosis (verdicts)"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# Find all AwaitingVerdict requests from idle-resource-reaper and grade them incorrect
+for req_name in $(kubectl get agentrequest -n "${NAMESPACE}" -l aip.io/agentIdentity=idle-resource-reaper -o jsonpath='{.items[*].metadata.name}'); do
+  echo "  Grading $req_name as incorrect (agent misidentified live service as idle)..."
+  curl -s -X PATCH "${GATEWAY_URL}/agent-requests/${req_name}/verdict?namespace=${NAMESPACE}" \
+    -H "Content-Type: application/json" \
+    -d '{"verdict":"incorrect","reasonCode":"wrong_diagnosis","note":"Agent used 6h stale cache. Live traffic confirmed."}' > /dev/null
+  sleep 1
+done
+
+echo ""
+echo "  Verdicts submitted. Trust profile updated."
+echo ""
+echo "  Dashboard (Trust Profiles tab): ${DASHBOARD_URL}"
+echo ""
+
+# ── Cleanup prompt ────────────────────────────────────────────────────────────
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  Demo complete. Re-run ./demo/scaledown/run.sh to replay."
+echo ""
+echo "  This demo showed SafetyPolicy blocking an agent with stale data."
+echo "  In the next demo we will focus on the trust ladder:"
+echo "    • Agent starts at Observer — every request graded before execution"
+echo "    • Correct verdicts build trust, incorrect ones demote"
+echo "    • Watch the agent graduate from Observer → Advisor → Trusted → Autonomous"
 echo ""
 echo "  To clean up:"
 echo "    kubectl delete agentrequests,auditrecords --all -n ${NAMESPACE}"

@@ -19,12 +19,16 @@ rules:
   resources:
   - agentrequests
   - agentrequests/status
+  - agenttrustprofiles
+  - agenttrustprofiles/status
   - auditrecords
   - diagnosticaccuracysummaries
   - diagnosticaccuracysummaries/status
   - governedresources
   - governedresources/status
   - safetypolicies
+  - agentgraduationpolicies
+  - agentgraduationpolicies/status
   verbs:
   - get
   - list

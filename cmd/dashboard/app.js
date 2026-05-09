@@ -209,7 +209,6 @@ function updateRoleUI(role) {
 async function fetchRequests() {
     if (!getToken() && !state.proxyAuth) {
         showBanner('Not authenticated — paste a Bearer token to continue.', 'warn');
-        return;
     }
     const ns = document.getElementById('req-ns-input')?.value?.trim() || 'default';
     try {
