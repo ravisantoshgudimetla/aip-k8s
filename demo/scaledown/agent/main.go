@@ -305,7 +305,15 @@ func printObservation(outcome reactOutcome, status agentRequestStatus) {
 	fmt.Printf(cyan+"  OBSERVE: Phase = %s"+reset+"\n", status.Phase)
 
 	if outcome == outcomeBlocked {
-		if status.Denial != nil {
+		if status.Phase == "AwaitingVerdict" {
+			fmt.Println(yellow + bold +
+				"           ⏸  AIP HELD FOR REVIEW (SoakMode — every request graded before execution)" +
+				reset)
+			fmt.Println()
+			fmt.Println("           Agent diagnosis will be reviewed by a human.")
+			fmt.Println("           If graded incorrect, the agent's trust profile drops.")
+			fmt.Println("           Infrastructure untouched until human decides.")
+		} else if status.Denial != nil {
 			fmt.Printf(red+bold+"           🚫 AIP DENIED: [%s]"+reset+"\n", status.Denial.Code)
 			fmt.Printf("           %s\n", status.Denial.Message)
 		} else if hasCondition(status.Conditions, "RequiresApproval", "True") {
@@ -455,6 +463,9 @@ func submitAndWait(gateway string, body agentRequestBody, namespace string) (rea
 			return outcomeApproved, status, initial.Name
 		}
 		if status.Phase == "Denied" {
+			return outcomeBlocked, status, initial.Name
+		}
+		if status.Phase == "AwaitingVerdict" {
 			return outcomeBlocked, status, initial.Name
 		}
 		if status.Phase == "Pending" && hasCondition(status.Conditions, "RequiresApproval", "True") {

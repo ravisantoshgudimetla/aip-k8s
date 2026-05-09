@@ -209,7 +209,6 @@ function updateRoleUI(role) {
 async function fetchRequests() {
     if (!getToken() && !state.proxyAuth) {
         showBanner('Not authenticated — paste a Bearer token to continue.', 'warn');
-        return;
     }
     const ns = document.getElementById('req-ns-input')?.value?.trim() || 'default';
     try {
@@ -784,13 +783,14 @@ function renderDetails() {
 // ── Diagnostics tab ──────────────────────────────────────────────────────────
 
 window.showTab = function(tabName) {
-    const views = ['requests', 'governed-resources', 'safety-policies'];
+    const views = ['requests', 'trust-profiles', 'governed-resources', 'safety-policies'];
     for (const v of views) {
         const el = document.getElementById(v + '-view');
         if (el) el.style.display = v === tabName ? 'block' : 'none';
         const tab = document.getElementById('tab-' + v);
         if (tab) tab.classList.toggle('active', v === tabName);
     }
+    if (tabName === 'trust-profiles') loadTrustProfiles();
     if (tabName === 'governed-resources') loadGovernedResources();
     if (tabName === 'safety-policies') loadSafetyPolicies();
 };
@@ -1602,6 +1602,58 @@ function fallbackCopy(text) {
     }
     document.body.removeChild(textArea);
     return successful;
+}
+
+// ── Trust Profiles tab ──────────────────────────────────────────────────────
+
+window.loadTrustProfiles = async function() {
+    try {
+        const ns = document.getElementById('tp-ns-input')?.value.trim() || state.namespace;
+        state.namespace = ns;
+        const response = await apiFetch(`/api/agent-trust-profiles?namespace=${encodeURIComponent(ns)}`);
+        if (!response.ok) throw new Error('Failed to fetch trust profiles');
+        const profiles = await response.json();
+        renderTrustProfiles(profiles);
+    } catch (err) {
+        console.error('Error fetching trust profiles:', err);
+        const tbody = document.getElementById('trust-profiles-list');
+        if (tbody) {
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--error);">Failed to load trust profiles</td></tr>`;
+        }
+    }
+};
+
+function renderTrustProfiles(profiles) {
+    const tbody = document.getElementById('trust-profiles-list');
+    if (!tbody) return;
+    if (!profiles || profiles.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--text-secondary);">No trust profiles found</td></tr>`;
+        return;
+    }
+    const levelColors = {
+        'Observer': 'var(--text-secondary)',
+        'Advisor': '#4fc3f7',
+        'Supervised': '#ffcc80',
+        'Trusted': '#81c784',
+        'Autonomous': '#a5d6a7'
+    };
+    tbody.innerHTML = profiles.map(p => {
+        const s = p.status || {};
+        const level = s.trustLevel || 'Observer';
+        const color = levelColors[level] || 'var(--text-secondary)';
+        const recentAcc = s.recentAccuracy != null ? (s.recentAccuracy * 100).toFixed(1) + '%' : '—';
+        const lastEval = s.lastEvaluatedAt ? new Date(s.lastEvaluatedAt).toLocaleString() : '—';
+        const totalReviewed = Number(s.totalReviewed) || 0;
+        const totalExecutions = Number(s.totalExecutions) || 0;
+        return `<tr>
+            <td style="font-family:'JetBrains Mono',monospace;font-size:0.82rem;">${escapeHtml(p.spec?.agentIdentity || '—')}</td>
+            <td><span style="color:${color};font-weight:600;">${escapeHtml(level)}</span></td>
+            <td>${escapeHtml(recentAcc)}</td>
+            <td>${escapeHtml(String(totalReviewed))}</td>
+            <td>${escapeHtml(String(totalExecutions))}</td>
+            <td style="font-size:0.78rem;color:var(--text-secondary);white-space:nowrap;">${escapeHtml(lastEval)}</td>
+        </tr>`;
+    }).join('');
 }
 
 // ── Bootstrap ────────────────────────────────────────────────────────────────

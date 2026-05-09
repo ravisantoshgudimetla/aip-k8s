@@ -10,4 +10,5 @@ spec:
     - scale-down
     - escalate
   contextFetcher: k8s-deployment
+  soakMode: true
   description: "Production deployments — live Kubernetes state fetched for safety policy evaluation."

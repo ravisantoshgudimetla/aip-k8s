@@ -68,8 +68,14 @@ extra:
 
 nav:
   - Home: index.md
-  - Reference:
-      - API Reference: api-reference.md
+  - Getting Started:
+      - Quick Start: quick-start.md
+      - Dashboard Walkthrough: dashboard.md
+  - User Guide:
+      - Dev Mode: user-guide/dev-mode.md
+      - Production Hardening: user-guide/production-hardening.md
+      - Demos:
+          - Scaledown: user-guide/demos/scaledown.md
   - Concepts:
       - Agent Graduation Ladder: agent-graduation-ladder.md
       - Trust Gate: trust-gate.md
@@ -77,3 +83,5 @@ nav:
       - Garbage Collection: garbage-collection.md
   - Authentication:
       - OIDC with Keycloak: oidc-keycloak.md
+  - Reference:
+      - API Reference: api-reference.md

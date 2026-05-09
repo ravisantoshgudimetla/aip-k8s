@@ -26,8 +26,11 @@ helm install aip-k8s \
   --create-namespace
 ```
 
-Then read the [Agent Graduation Ladder](./agent-graduation-ladder.md) to understand how
-agents earn trust over time.
+Then follow the [Quick Start](./quick-start.md) to submit your first governed request
+and see AIP block an agent operating on stale data.
+
+> ⚠️ **Default install is dev mode** — no authentication. See [Dev Mode](./user-guide/dev-mode.md)
+> and [Production Hardening](./user-guide/production-hardening.md) before deploying to a real cluster.
 
 ## Core concepts
 
@@ -37,6 +40,16 @@ agents earn trust over time.
 | [Trust Gate](./trust-gate.md) | How the gateway enforces trust levels on every request |
 | [Governed Resources](./governed-resources.md) | How to register infrastructure resources that agents may target |
 | [Garbage Collection](./garbage-collection.md) | How to manage retention and export of diagnostic records |
+
+## User guide
+
+| Guide | What you'll learn |
+|---|---|
+| [Quick Start](./quick-start.md) | Install, verify, and submit your first request |
+| [Dashboard Walkthrough](./dashboard.md) | Visual inspection of requests, policy decisions, and audit trails |
+| [Dev Mode](./user-guide/dev-mode.md) | What the default install enables and disables |
+| [Production Hardening](./user-guide/production-hardening.md) | OIDC, roles, JWT, and security checklist |
+| [Scaledown Demo](./user-guide/demos/scaledown.md) | End-to-end: agent on stale metrics gets blocked |
 
 ## Authentication
 
