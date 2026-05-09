@@ -120,14 +120,24 @@ echo "  Grading agent diagnosis (verdicts)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# Find all AwaitingVerdict requests from idle-resource-reaper and grade them incorrect
-for req_name in $(kubectl get agentrequest -n "${NAMESPACE}" -l aip.io/agentIdentity=idle-resource-reaper -o jsonpath='{.items[*].metadata.name}'); do
-  echo "  Grading $req_name as incorrect (agent misidentified live service as idle)..."
-  curl -s -X PATCH "${GATEWAY_URL}/agent-requests/${req_name}/verdict?namespace=${NAMESPACE}" \
-    -H "Content-Type: application/json" \
-    -d '{"verdict":"incorrect","reasonCode":"wrong_diagnosis","note":"Agent used 6h stale cache. Live traffic confirmed."}' > /dev/null
-  sleep 1
-done
+# Find AwaitingVerdict requests from idle-resource-reaper and grade them incorrect
+awaiting_json=$(kubectl get agentrequest -n "${NAMESPACE}" -l aip.io/agentIdentity=idle-resource-reaper -o json)
+awaiting_names=$(echo "${awaiting_json}" | jq -r '.items[] | select(.status.phase == "AwaitingVerdict") | .metadata.name')
+
+if [[ -z "${awaiting_names}" ]]; then
+  echo "  No AwaitingVerdict requests to grade."
+else
+  for req_name in ${awaiting_names}; do
+    echo "  Grading $req_name as incorrect (agent misidentified live service as idle)..."
+    if ! curl -sf -X PATCH "${GATEWAY_URL}/agent-requests/${req_name}/verdict?namespace=${NAMESPACE}" \
+        -H "Content-Type: application/json" \
+        -d '{"verdict":"incorrect","reasonCode":"wrong_diagnosis","note":"Agent used 6h stale cache. Live traffic confirmed."}' > /dev/null; then
+      echo "  ✗ Failed to submit verdict for $req_name"
+      exit 1
+    fi
+    sleep 1
+  done
+fi
 
 echo ""
 echo "  Verdicts submitted. Trust profile updated."

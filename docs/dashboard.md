@@ -14,8 +14,9 @@ Open `http://localhost:8082` in your browser.
 
 ## Overview
 
-The dashboard has three main tabs:
+The dashboard has four main tabs:
 - **Agent Requests** — submitted intents, their phase, and detailed reasoning
+- **Trust Profiles** — agent trust levels, accuracy, and execution history
 - **Governed Resources** — registered infrastructure targets
 - **Safety Policies** — active CEL rules
 
@@ -79,7 +80,6 @@ Graded verdicts feed back into the agent's trust profile. An agent with consiste
 ## What's not shown
 
 The dashboard does not yet display:
-- **Agent trust profiles** — view earned trust levels via `kubectl get agenttrustprofile`
 - **Graduation ladder configuration** — defined in `AgentGraduationPolicy` CRDs
 
-See the [Trust Gate guide](./trust-gate.md) for details on how trust levels are computed.
+Trust profiles are visible on the **Trust Profiles** tab. See the [Trust Gate guide](./trust-gate.md) for details on how trust levels are computed.

@@ -35,7 +35,7 @@ and see AIP block an agent operating on stale data.
 ## Core concepts
 
 | Guide | What you'll learn |
-|---|---|---|
+|---|---|
 | [Agent Graduation Ladder](./agent-graduation-ladder.md) | How agents progress from Observer to Autonomous through measured accuracy |
 | [Trust Gate](./trust-gate.md) | How the gateway enforces trust levels on every request |
 | [Governed Resources](./governed-resources.md) | How to register infrastructure resources that agents may target |
@@ -44,7 +44,7 @@ and see AIP block an agent operating on stale data.
 ## User guide
 
 | Guide | What you'll learn |
-|---|---|---|
+|---|---|
 | [Quick Start](./quick-start.md) | Install, verify, and submit your first request |
 | [Dashboard Walkthrough](./dashboard.md) | Visual inspection of requests, policy decisions, and audit trails |
 | [Dev Mode](./user-guide/dev-mode.md) | What the default install enables and disables |
@@ -54,7 +54,7 @@ and see AIP block an agent operating on stale data.
 ## Authentication
 
 | Guide | What you'll learn |
-|---|---|---|
+|---|---|
 | [OIDC with Keycloak](./oidc-keycloak.md) | Configure JWT authentication with Keycloak (recommended for local dev) |
 
 ## Quick reference

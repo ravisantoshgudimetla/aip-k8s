@@ -1643,12 +1643,14 @@ function renderTrustProfiles(profiles) {
         const color = levelColors[level] || 'var(--text-secondary)';
         const recentAcc = s.recentAccuracy != null ? (s.recentAccuracy * 100).toFixed(1) + '%' : '—';
         const lastEval = s.lastEvaluatedAt ? new Date(s.lastEvaluatedAt).toLocaleString() : '—';
+        const totalReviewed = Number(s.totalReviewed) || 0;
+        const totalExecutions = Number(s.totalExecutions) || 0;
         return `<tr>
             <td style="font-family:'JetBrains Mono',monospace;font-size:0.82rem;">${escapeHtml(p.spec?.agentIdentity || '—')}</td>
             <td><span style="color:${color};font-weight:600;">${escapeHtml(level)}</span></td>
             <td>${escapeHtml(recentAcc)}</td>
-            <td>${s.totalReviewed || 0}</td>
-            <td>${s.totalExecutions || 0}</td>
+            <td>${escapeHtml(String(totalReviewed))}</td>
+            <td>${escapeHtml(String(totalExecutions))}</td>
             <td style="font-size:0.78rem;color:var(--text-secondary);white-space:nowrap;">${escapeHtml(lastEval)}</td>
         </tr>`;
     }).join('');

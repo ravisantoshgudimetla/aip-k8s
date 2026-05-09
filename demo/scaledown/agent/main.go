@@ -306,7 +306,9 @@ func printObservation(outcome reactOutcome, status agentRequestStatus) {
 
 	if outcome == outcomeBlocked {
 		if status.Phase == "AwaitingVerdict" {
-			fmt.Println(yellow + bold + "           ⏸  AIP HELD FOR REVIEW (SoakMode — every request graded before execution)" + reset)
+			fmt.Println(yellow + bold +
+				"           ⏸  AIP HELD FOR REVIEW (SoakMode — every request graded before execution)" +
+				reset)
 			fmt.Println()
 			fmt.Println("           Agent diagnosis will be reviewed by a human.")
 			fmt.Println("           If graded incorrect, the agent's trust profile drops.")
