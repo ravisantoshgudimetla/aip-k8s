@@ -543,7 +543,7 @@ func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, agentReq 
 	}
 
 	// Step 1 - Fetch Provider Context based on GovernedResource
-	if ref := governedResourceRef(agentReq); ref != nil {
+	if ref := governedResourceRef(agentReq); ref != nil && agentReq.Status.ProviderContext == nil {
 		var gr governancev1alpha1.GovernedResource
 		if err := reader.Get(ctx, types.NamespacedName{Name: ref.Name}, &gr); err != nil {
 			logger.Error(err, "Failed to get GovernedResource for provider context", "name", ref.Name)
