@@ -14,13 +14,12 @@ spec:
         app: github-mcp-server
     spec:
       securityContext:
-        runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
       - name: github-mcp
         image: ghcr.io/github/github-mcp-server:v1.0.0
-        command: ["github-mcp-server", "http", "--port", "8080"]
+        command: ["/server/github-mcp-server", "http", "--port", "8080"]
         env:
         - name: GITHUB_PERSONAL_ACCESS_TOKEN
           valueFrom:

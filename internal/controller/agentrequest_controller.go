@@ -84,6 +84,7 @@ type AgentRequestReconciler struct {
 	LockWaitDuration     time.Duration
 	Evaluator            evaluation.Evaluator
 	TargetContextFetcher evaluation.TargetContextFetcher
+	GitHubMCPFetcher     *fetchers.GitHubMCPFetcher
 }
 
 // lockWaitTimeout returns the configured LockWaitDuration, falling back to
@@ -164,7 +165,7 @@ func (r *AgentRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// 1.1 GovernedResource Integrity Check
-	if agentReq.Spec.GovernedResourceRef != nil {
+	if governedResourceRef(&agentReq) != nil {
 		if err := r.checkGovernedResourceIntegrity(ctx, &agentReq); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -204,17 +205,28 @@ func (r *AgentRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	return ctrl.Result{}, nil
 }
 
+// governedResourceRef returns the effective GovernedResourceRef for an AgentRequest.
+// It reads from Status first (canonical), falling back to Spec (deprecated) for
+// requests created before the field was added to Status.
+func governedResourceRef(agentReq *governancev1alpha1.AgentRequest) *governancev1alpha1.GovernedResourceRef {
+	if agentReq.Status.GovernedResourceRef != nil {
+		return agentReq.Status.GovernedResourceRef
+	}
+	return agentReq.Spec.GovernedResourceRef
+}
+
 func (r *AgentRequestReconciler) checkGovernedResourceIntegrity(ctx context.Context, agentReq *governancev1alpha1.AgentRequest) error {
+	ref := governedResourceRef(agentReq)
 	var gr governancev1alpha1.GovernedResource
-	if err := r.Get(ctx, types.NamespacedName{Name: agentReq.Spec.GovernedResourceRef.Name}, &gr); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: ref.Name}, &gr); err != nil {
 		if errors.IsNotFound(err) {
-			log.FromContext(ctx).Info("Denying AgentRequest because its GovernedResource was deleted", "name", agentReq.Name, "governedResource", agentReq.Spec.GovernedResourceRef.Name)
+			log.FromContext(ctx).Info("Denying AgentRequest because its GovernedResource was deleted", "name", agentReq.Name, "governedResource", ref.Name)
 			fromPhase := agentReq.Status.Phase
 			base := agentReq.DeepCopy()
 			agentReq.Status.Phase = governancev1alpha1.PhaseDenied
 			agentReq.Status.Denial = &governancev1alpha1.DenialResponse{
 				Code:    governancev1alpha1.DenialCodeGovernedResourceDeleted,
-				Message: fmt.Sprintf("The GovernedResource %q that admitted this request was deleted.", agentReq.Spec.GovernedResourceRef.Name),
+				Message: fmt.Sprintf("The GovernedResource %q that admitted this request was deleted.", ref.Name),
 			}
 			agentRequestDeniedTotal.WithLabelValues(governancev1alpha1.DenialCodeGovernedResourceDeleted).Inc()
 			agentRequestActive.Dec()
@@ -234,10 +246,10 @@ func (r *AgentRequestReconciler) checkGovernedResourceIntegrity(ctx context.Cont
 	}
 
 	// Deny if the GovernedResource has been recreated or mutated (generation mismatch).
-	if gr.Generation != agentReq.Spec.GovernedResourceRef.Generation {
+	if gr.Generation != ref.Generation {
 		log.FromContext(ctx).Info("Denying AgentRequest due to GovernedResource generation mismatch",
 			"name", agentReq.Name,
-			"expectedGeneration", agentReq.Spec.GovernedResourceRef.Generation,
+			"expectedGeneration", ref.Generation,
 			"currentGeneration", gr.Generation)
 		fromPhase := agentReq.Status.Phase
 		base := agentReq.DeepCopy()
@@ -246,8 +258,8 @@ func (r *AgentRequestReconciler) checkGovernedResourceIntegrity(ctx context.Cont
 			Code: governancev1alpha1.DenialCodeGenerationMismatch,
 			Message: fmt.Sprintf(
 				"GovernedResource %q generation has changed (expected %d, current %d); the policy binding is no longer valid.",
-				agentReq.Spec.GovernedResourceRef.Name,
-				agentReq.Spec.GovernedResourceRef.Generation,
+				ref.Name,
+				ref.Generation,
 				gr.Generation,
 			),
 		}
@@ -408,9 +420,9 @@ func (r *AgentRequestReconciler) initializePhase(
 		phase = governancev1alpha1.PhaseAwaitingVerdict
 		reason = "TrustGateBlock"
 		message = "Agent trust level does not permit execution; routing to AwaitingVerdict"
-	} else if agentReq.Spec.GovernedResourceRef != nil {
+	} else if ref := governedResourceRef(agentReq); ref != nil {
 		var gr governancev1alpha1.GovernedResource
-		if err := reader.Get(ctx, types.NamespacedName{Name: agentReq.Spec.GovernedResourceRef.Name}, &gr); err == nil {
+		if err := reader.Get(ctx, types.NamespacedName{Name: ref.Name}, &gr); err == nil {
 			if gr.Spec.SoakMode {
 				phase = governancev1alpha1.PhaseAwaitingVerdict
 				reason = "SoakModeAdmission"
@@ -418,7 +430,7 @@ func (r *AgentRequestReconciler) initializePhase(
 			}
 		} else if !errors.IsNotFound(err) {
 			return false, fmt.Errorf("fetching GovernedResource %s: %w",
-				agentReq.Spec.GovernedResourceRef.Name, err)
+				ref.Name, err)
 		}
 	}
 
@@ -502,10 +514,10 @@ func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, agentReq 
 		hasGovernedResource bool
 		grLabels            map[string]string
 	)
-	if agentReq.Spec.GovernedResourceRef != nil {
+	if ref := governedResourceRef(agentReq); ref != nil {
 		var gr governancev1alpha1.GovernedResource
-		if err := reader.Get(ctx, types.NamespacedName{Name: agentReq.Spec.GovernedResourceRef.Name}, &gr); err != nil {
-			logger.Error(err, "Failed to get GovernedResource for policy matching", "name", agentReq.Spec.GovernedResourceRef.Name)
+		if err := reader.Get(ctx, types.NamespacedName{Name: ref.Name}, &gr); err != nil {
+			logger.Error(err, "Failed to get GovernedResource for policy matching", "name", ref.Name)
 			return ctrl.Result{}, err
 		}
 		hasGovernedResource = true
@@ -531,17 +543,25 @@ func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, agentReq 
 	}
 
 	// Step 1 - Fetch Provider Context based on GovernedResource
-	if agentReq.Spec.GovernedResourceRef != nil {
+	if ref := governedResourceRef(agentReq); ref != nil && agentReq.Status.ProviderContext == nil {
 		var gr governancev1alpha1.GovernedResource
-		if err := reader.Get(ctx, types.NamespacedName{Name: agentReq.Spec.GovernedResourceRef.Name}, &gr); err != nil {
-			logger.Error(err, "Failed to get GovernedResource for provider context", "name", agentReq.Spec.GovernedResourceRef.Name)
+		if err := reader.Get(ctx, types.NamespacedName{Name: ref.Name}, &gr); err != nil {
+			logger.Error(err, "Failed to get GovernedResource for provider context", "name", ref.Name)
 			return ctrl.Result{}, err
 		}
 		providerCtx, err := r.fetchContextFromProvider(ctx, agentReq, &gr)
 		if err != nil {
 			logger.Error(err, "Provider context fetch failed")
 		} else if providerCtx != nil {
+			providerBase := agentReq.DeepCopy()
 			agentReq.Status.ProviderContext = providerCtx
+			if patchErr := r.Status().Patch(ctx, agentReq, client.MergeFrom(providerBase)); patchErr != nil {
+				logger.Error(patchErr, "Failed to persist ProviderContext to status")
+				return ctrl.Result{}, patchErr
+			}
+			// Requeue so the next reconcile reads a fresh object with the
+			// persisted ProviderContext before running evaluation.
+			return ctrl.Result{Requeue: true}, nil
 		}
 	}
 
@@ -1227,19 +1247,23 @@ func (r *AgentRequestReconciler) fetchContextFromProvider(ctx context.Context, a
 		return nil, nil
 	}
 
-	var fetcher func(context.Context, client.Client, string) (*apiextensionsv1.JSON, error)
+	var (
+		fetchedJSON *apiextensionsv1.JSON
+		err         error
+	)
 	switch fetcherName {
 	case "k8s-deployment":
-		fetcher = fetchers.FetchK8sDeployment
+		fetchedJSON, err = fetchers.FetchK8sDeployment(ctx, r.Client, agentReq.Spec.Target.URI)
 	case "karpenter":
-		fetcher = fetchers.FetchKarpenter
+		fetchedJSON, err = fetchers.FetchKarpenter(ctx, r.Client, agentReq.Spec.Target.URI)
 	case "github":
-		fetcher = fetchers.FetchGitHubMCP
+		if r.GitHubMCPFetcher == nil {
+			return nil, fmt.Errorf("GitHubMCPFetcher not configured")
+		}
+		fetchedJSON, err = r.GitHubMCPFetcher.Fetch(ctx, r.Client, agentReq.Spec.Target.URI)
 	default:
 		return nil, fmt.Errorf("unknown fetcher: %s", fetcherName)
 	}
-
-	fetchedJSON, err := fetcher(ctx, r.Client, agentReq.Spec.Target.URI)
 	if err != nil {
 		return nil, err
 	}

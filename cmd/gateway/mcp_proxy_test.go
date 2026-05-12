@@ -3,16 +3,20 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/onsi/gomega"
 )
 
-func TestMCPProxy_MissingToken(t *testing.T) {
+func TestMCPProxy_JWTNotConfigured(t *testing.T) {
 	g := gomega.NewWithT(t)
-	s := &Server{jwtManager: nil, httpClient: &http.Client{}}
+	s := &Server{jwtManager: nil, httpClient: &http.Client{},
+		mcpServers: []MCPServer{
+			{Name: "github", URL: "http://example.com", Status: "available",
+				Tools: []MCPTool{{Name: "create_pull_request", ReadOnly: false}}},
+		},
+	}
 	req := httptest.NewRequest("POST", "/mcp-proxy/github/create_pull_request",
 		strings.NewReader("{}"))
 	req.SetPathValue("server", "github")
@@ -22,94 +26,86 @@ func TestMCPProxy_MissingToken(t *testing.T) {
 	g.Expect(rr.Code).To(gomega.Equal(http.StatusServiceUnavailable))
 }
 
-func TestToolAllowed_ReadOnlyTool(t *testing.T) {
-	g := gomega.NewWithT(t)
-	server := &MCPServer{
-		Name: "github",
-		Tools: []MCPTool{
-			{Name: "get_file_contents", ReadOnly: true},
-		},
-	}
-	srv := &Server{}
-	g.Expect(srv.toolAllowed(server, "get_file_contents", "create_pull_request")).
-		To(gomega.BeTrue())
-}
-
-func TestToolAllowed_WriteTool_ActionMatches(t *testing.T) {
-	g := gomega.NewWithT(t)
-	server := &MCPServer{
-		Name: "github",
-		Tools: []MCPTool{
-			{Name: "create_pull_request", ReadOnly: false},
-		},
-	}
-	srv := &Server{}
-	g.Expect(srv.toolAllowed(server, "create_pull_request", "create_pull_request")).
-		To(gomega.BeTrue())
-}
-
-func TestToolAllowed_WriteTool_ActionMismatch(t *testing.T) {
-	g := gomega.NewWithT(t)
-	server := &MCPServer{
-		Name: "github",
-		Tools: []MCPTool{
-			{Name: "create_pull_request", ReadOnly: false},
-		},
-	}
-	srv := &Server{}
-	g.Expect(srv.toolAllowed(server, "create_pull_request", "list_pull_requests")).
-		To(gomega.BeFalse())
-}
-
 func TestFindMCPServer_Found(t *testing.T) {
 	g := gomega.NewWithT(t)
-	if err := os.Setenv("MCP_REGISTRY",
-		`[{"name":"github","url":"http://github-mcp:8080","status":`+
-			`"available","tools":[{"name":"create_pull_request","read_only":false}]}]`); err != nil {
-		t.Skipf("skipping: %v", err)
+	srv := &Server{
+		mcpServers: []MCPServer{
+			{Name: "github", URL: "http://github-mcp:8080", Status: "available",
+				Tools: []MCPTool{{Name: "create_pull_request", ReadOnly: false}}},
+		},
 	}
-	defer func() { _ = os.Unsetenv("MCP_REGISTRY") }()
-
-	srv := &Server{}
-	server, err := srv.findMCPServer("github")
-	g.Expect(err).NotTo(gomega.HaveOccurred())
+	server := srv.findMCPServer("github")
 	g.Expect(server).NotTo(gomega.BeNil())
 	g.Expect(server.URL).To(gomega.Equal("http://github-mcp:8080"))
 }
 
 func TestFindMCPServer_NotFound(t *testing.T) {
 	g := gomega.NewWithT(t)
-	if err := os.Setenv("MCP_REGISTRY",
-		`[{"name":"github","url":"http://github-mcp:8080"}]`); err != nil {
-		t.Skipf("skipping: %v", err)
+	srv := &Server{
+		mcpServers: []MCPServer{
+			{Name: "github", URL: "http://github-mcp:8080"},
+		},
 	}
-	defer func() { _ = os.Unsetenv("MCP_REGISTRY") }()
-
-	srv := &Server{}
-	server, err := srv.findMCPServer("nonexistent")
-	g.Expect(err).NotTo(gomega.HaveOccurred())
+	server := srv.findMCPServer("nonexistent")
 	g.Expect(server).To(gomega.BeNil())
 }
 
 func TestFindMCPServer_EmptyRegistry(t *testing.T) {
 	g := gomega.NewWithT(t)
-	_ = os.Unsetenv("MCP_REGISTRY")
-
 	srv := &Server{}
-	server, err := srv.findMCPServer("github")
-	g.Expect(err).NotTo(gomega.HaveOccurred())
+	server := srv.findMCPServer("github")
 	g.Expect(server).To(gomega.BeNil())
 }
 
-func TestFindMCPServer_InvalidJSON(t *testing.T) {
+func TestEnforceRepoClaim_Match(t *testing.T) {
 	g := gomega.NewWithT(t)
-	if err := os.Setenv("MCP_REGISTRY", "not-valid-json"); err != nil {
-		t.Skipf("skipping: %v", err)
-	}
-	defer func() { _ = os.Unsetenv("MCP_REGISTRY") }()
+	errStr := enforceRepoClaim("github://acme/demo", map[string]any{"owner": "acme", "repo": "demo"})
+	g.Expect(errStr).To(gomega.BeEmpty())
+}
 
+func TestEnforceRepoClaim_OwnerMismatch(t *testing.T) {
+	g := gomega.NewWithT(t)
+	errStr := enforceRepoClaim("github://acme/demo", map[string]any{"owner": "evil", "repo": "demo"})
+	g.Expect(errStr).To(gomega.ContainSubstring("owner mismatch"))
+}
+
+func TestEnforceRepoClaim_RepoMismatch(t *testing.T) {
+	g := gomega.NewWithT(t)
+	errStr := enforceRepoClaim("github://acme/demo", map[string]any{"owner": "acme", "repo": "evil"})
+	g.Expect(errStr).To(gomega.ContainSubstring("repo mismatch"))
+}
+
+func TestEnforceRepoClaim_MissingOwnerOrRepo(t *testing.T) {
+	g := gomega.NewWithT(t)
+	errStr := enforceRepoClaim("github://acme/demo", map[string]any{"owner": "acme"})
+	g.Expect(errStr).To(gomega.ContainSubstring("missing owner or repo"))
+}
+
+func TestEnforceRepoClaim_EmptyRepo(t *testing.T) {
+	g := gomega.NewWithT(t)
+	errStr := enforceRepoClaim("", map[string]any{"owner": "acme", "repo": "demo"})
+	g.Expect(errStr).To(gomega.ContainSubstring("missing repo claim"))
+}
+
+func TestEnforceRepoClaim_InvalidURI(t *testing.T) {
+	g := gomega.NewWithT(t)
+	errStr := enforceRepoClaim("github://acme", map[string]any{"owner": "acme", "repo": "demo"})
+	g.Expect(errStr).To(gomega.ContainSubstring("invalid repo claim"))
+}
+
+func TestFindTool_Found(t *testing.T) {
+	g := gomega.NewWithT(t)
+	server := &MCPServer{Tools: []MCPTool{{Name: "get_file_contents", ReadOnly: true}}}
 	srv := &Server{}
-	server, err := srv.findMCPServer("github")
-	g.Expect(err).To(gomega.HaveOccurred())
-	g.Expect(server).To(gomega.BeNil())
+	tool := srv.findTool(server, "get_file_contents")
+	g.Expect(tool).NotTo(gomega.BeNil())
+	g.Expect(tool.ReadOnly).To(gomega.BeTrue())
+}
+
+func TestFindTool_NotFound(t *testing.T) {
+	g := gomega.NewWithT(t)
+	server := &MCPServer{Tools: []MCPTool{{Name: "get_file_contents", ReadOnly: true}}}
+	srv := &Server{}
+	tool := srv.findTool(server, "create_pull_request")
+	g.Expect(tool).To(gomega.BeNil())
 }

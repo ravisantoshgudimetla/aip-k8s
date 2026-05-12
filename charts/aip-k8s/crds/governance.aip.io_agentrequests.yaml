@@ -119,6 +119,7 @@ spec:
                   GovernedResourceRef records which GovernedResource admitted this AgentRequest.
                   Set by the gateway at admission time. Immutable after creation.
                   Empty only when --require-governed-resource=false and no GovernedResources exist.
+                  Deprecated: use status.governedResourceRef instead. Will be removed in v1beta1.
                 properties:
                   generation:
                     format: int64
@@ -404,6 +405,20 @@ spec:
                   a fresh policy evaluation on the request.
                 format: int64
                 type: integer
+              governedResourceRef:
+                description: |-
+                  GovernedResourceRef records which GovernedResource admitted this AgentRequest.
+                  Set by the gateway at admission time. Mirrors the deprecated spec.governedResourceRef.
+                properties:
+                  generation:
+                    format: int64
+                    type: integer
+                  name:
+                    type: string
+                required:
+                - generation
+                - name
+                type: object
               leaseName:
                 type: string
               phase:

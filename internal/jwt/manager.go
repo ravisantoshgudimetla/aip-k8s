@@ -42,24 +42,30 @@ type Claims struct {
 // NewManager loads an Ed25519 private key from a PEM file.
 // clock is injectable for testing; pass time.Now for production.
 func NewManager(keyPath string, clock func() time.Time) (*Manager, error) {
-	if clock == nil {
-		clock = time.Now
-	}
 	data, err := os.ReadFile(keyPath)
 	if err != nil {
 		return nil, fmt.Errorf("read key file %s: %w", keyPath, err)
 	}
-	block, _ := pem.Decode(data)
+	return NewManagerFromPEM(data, clock)
+}
+
+// NewManagerFromPEM creates a Manager from raw PEM-encoded key data.
+// clock is injectable for testing; pass time.Now for production.
+func NewManagerFromPEM(pemData []byte, clock func() time.Time) (*Manager, error) {
+	if clock == nil {
+		clock = time.Now
+	}
+	block, _ := pem.Decode(pemData)
 	if block == nil {
-		return nil, fmt.Errorf("no PEM block found in %s", keyPath)
+		return nil, fmt.Errorf("no PEM block found in key data")
 	}
 	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("parse private key from %s: %w", keyPath, err)
+		return nil, fmt.Errorf("parse private key: %w", err)
 	}
 	pk, ok := key.(ed25519.PrivateKey)
 	if !ok {
-		return nil, fmt.Errorf("not an Ed25519 key in %s", keyPath)
+		return nil, fmt.Errorf("not an Ed25519 key")
 	}
 	return &Manager{
 		privateKey: pk,

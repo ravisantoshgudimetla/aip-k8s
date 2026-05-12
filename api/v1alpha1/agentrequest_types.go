@@ -74,6 +74,7 @@ type AgentRequestSpec struct {
 	// GovernedResourceRef records which GovernedResource admitted this AgentRequest.
 	// Set by the gateway at admission time. Immutable after creation.
 	// Empty only when --require-governed-resource=false and no GovernedResources exist.
+	// Deprecated: use status.governedResourceRef instead. Will be removed in v1beta1.
 	// +optional
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="governedResourceRef is immutable after creation"
 	GovernedResourceRef *GovernedResourceRef `json:"governedResourceRef,omitempty"`
@@ -271,6 +272,11 @@ type AgentRequestStatus struct {
 	// VerdictAt is the timestamp of the review.
 	// +optional
 	VerdictAt *metav1.Time `json:"verdictAt,omitempty"`
+
+	// GovernedResourceRef records which GovernedResource admitted this AgentRequest.
+	// Set by the gateway at admission time. Mirrors the deprecated spec.governedResourceRef.
+	// +optional
+	GovernedResourceRef *GovernedResourceRef `json:"governedResourceRef,omitempty"`
 }
 
 // ControlPlaneVerification captures live cluster state that the AIP control

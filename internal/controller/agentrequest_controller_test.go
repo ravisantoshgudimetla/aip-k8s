@@ -460,8 +460,7 @@ var _ = Describe("AgentRequest Controller", func() {
 				_, _ = fmt.Fprintln(w, `{"content":[{"type":"text","text":"[]"}],"isError":false}`)
 			}))
 			defer server.Close()
-			fetchers.GitHubMCPURL = server.URL
-			defer func() { fetchers.GitHubMCPURL = "http://github-mcp.aip-k8s-system.svc" }()
+			githubFetcher := fetchers.NewGitHubMCPFetcher(server.URL, time.Second)
 
 			reqName := "schema-fail-req"
 			reqNN := types.NamespacedName{Name: reqName, Namespace: "default"}
@@ -483,11 +482,12 @@ var _ = Describe("AgentRequest Controller", func() {
 
 			eval, _ := evaluation.NewEvaluator()
 			controllerReconciler := &AgentRequestReconciler{
-				Client:          k8sClient,
-				APIReader:       k8sClient, // Use direct client to avoid cache latency
-				Scheme:          k8sClient.Scheme(),
-				OpsLockDuration: testOpsLockDuration,
-				Evaluator:       eval,
+				Client:           k8sClient,
+				APIReader:        k8sClient, // Use direct client to avoid cache latency
+				Scheme:           k8sClient.Scheme(),
+				OpsLockDuration:  testOpsLockDuration,
+				Evaluator:        eval,
+				GitHubMCPFetcher: githubFetcher,
 			}
 
 			// Reconcile 1: Init -> Pending
