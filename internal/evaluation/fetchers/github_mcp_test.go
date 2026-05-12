@@ -7,14 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
-
-var defaultGitHubMCPURL = "http://github-mcp.aip-k8s-system.svc"
 
 func TestParseGitHubURI_Basic(t *testing.T) {
 	g := gomega.NewWithT(t)
@@ -70,45 +69,52 @@ func TestFetchGitHubMCP_FileContents(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		g.Expect(r.URL.Path).To(gomega.Equal("/tools/call"))
-		g.Expect(r.Method).To(gomega.Equal("POST"))
 
-		var call struct {
-			Name      string         `json:"name"`
-			Arguments map[string]any `json:"arguments"`
+		var rpcReq struct {
+			JSONRPC string `json:"jsonrpc"`
+			Method  string `json:"method"`
+			Params  struct {
+				Name      string         `json:"name"`
+				Arguments map[string]any `json:"arguments"`
+			} `json:"params"`
 		}
-		g.Expect(json.NewDecoder(r.Body).Decode(&call)).To(gomega.Succeed())
+		g.Expect(json.NewDecoder(r.Body).Decode(&rpcReq)).To(gomega.Succeed())
+		g.Expect(rpcReq.JSONRPC).To(gomega.Equal("2.0"))
+		g.Expect(rpcReq.Method).To(gomega.Equal("tools/call"))
 
-		if call.Name == "get_file_contents" {
-			g.Expect(call.Arguments["owner"]).To(gomega.Equal("myorg"))
-			g.Expect(call.Arguments["repo"]).To(gomega.Equal("myrepo"))
-			g.Expect(call.Arguments["path"]).To(gomega.Equal("config.yaml"))
-			g.Expect(call.Arguments["branch"]).To(gomega.Equal("main"))
+		callName := rpcReq.Params.Name
+		args := rpcReq.Params.Arguments
 
-			w.Header().Set("Content-Type", "application/json")
-			// writing to in-memory test recorder cannot fail
-			_, _ = fmt.Fprintln(w, `{"content":[{"type":"text","text":"replicas: 5\nmaxNodes: 10"}],"isError":false}`)
-			return
+		switch callName {
+		case "get_file_contents":
+			g.Expect(args["owner"]).To(gomega.Equal("myorg"))
+			g.Expect(args["repo"]).To(gomega.Equal("myrepo"))
+			g.Expect(args["path"]).To(gomega.Equal("config.yaml"))
+			g.Expect(args["branch"]).To(gomega.Equal("main"))
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprintln(w, "event: message")
+			_, _ = fmt.Fprintln(w, `data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"resource","resource":{"text":"ok: owner=myorg repo=myrepo path=config.yaml branch=main"}}],"isError":false}}`)
+		case "list_pull_requests":
+			g.Expect(args["owner"]).To(gomega.Equal("myorg"))
+			g.Expect(args["repo"]).To(gomega.Equal("myrepo"))
+			g.Expect(args["state"]).To(gomega.Equal("open"))
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprintln(w, "event: message")
+			_, _ = fmt.Fprintln(w, `data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"[{\"id\":1},{\"id\":2}]"}],"isError":false}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
 		}
-		if call.Name == "list_pull_requests" {
-			w.Header().Set("Content-Type", "application/json")
-			// writing to in-memory test recorder cannot fail
-			_, _ = fmt.Fprintln(w, `{"content":[{"type":"text","text":"[{\"id\":1},{\"id\":2}]"}],"isError":false}`)
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-		// writing to in-memory test recorder cannot fail
-		_, _ = fmt.Fprintln(w, `{"message":"unknown tool"}`)
 	}))
 	defer server.Close()
 
-	GitHubMCPURL = server.URL
-	defer func() { GitHubMCPURL = defaultGitHubMCPURL }()
-
+	fetcher := NewGitHubMCPFetcher(server.URL, time.Second)
 	scheme := newScheme()
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	uri := "github://myorg/myrepo/files/main/config.yaml"
-	jsonRes, err := FetchGitHubMCP(context.Background(), c, uri)
+	jsonRes, err := fetcher.Fetch(context.Background(), c, uri)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(jsonRes).NotTo(gomega.BeNil())
 
@@ -128,34 +134,41 @@ func TestFetchGitHubMCP_RepoOnly(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		g.Expect(r.URL.Path).To(gomega.Equal("/tools/call"))
 
-		var call struct {
-			Name      string         `json:"name"`
-			Arguments map[string]any `json:"arguments"`
+		var rpcReq struct {
+			JSONRPC string `json:"jsonrpc"`
+			Method  string `json:"method"`
+			Params  struct {
+				Name      string         `json:"name"`
+				Arguments map[string]any `json:"arguments"`
+			} `json:"params"`
 		}
-		g.Expect(json.NewDecoder(r.Body).Decode(&call)).To(gomega.Succeed())
+		g.Expect(json.NewDecoder(r.Body).Decode(&rpcReq)).To(gomega.Succeed())
+		g.Expect(rpcReq.JSONRPC).To(gomega.Equal("2.0"))
+		g.Expect(rpcReq.Method).To(gomega.Equal("tools/call"))
 
-		if call.Name == "list_pull_requests" {
-			g.Expect(call.Arguments["owner"]).To(gomega.Equal("myorg"))
-			g.Expect(call.Arguments["repo"]).To(gomega.Equal("myrepo"))
-			g.Expect(call.Arguments["state"]).To(gomega.Equal("open"))
+		callName := rpcReq.Params.Name
+		args := rpcReq.Params.Arguments
 
-			w.Header().Set("Content-Type", "application/json")
-			// writing to in-memory test recorder cannot fail
-			_, _ = fmt.Fprintln(w, `{"content":[{"type":"text","text":"[{\"id\":1},{\"id\":2},{\"id\":3}]"}],"isError":false}`)
+		if callName == "list_pull_requests" {
+			g.Expect(args["owner"]).To(gomega.Equal("myorg"))
+			g.Expect(args["repo"]).To(gomega.Equal("myrepo"))
+			g.Expect(args["state"]).To(gomega.Equal("open"))
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprintln(w, "event: message")
+			_, _ = fmt.Fprintln(w, `data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"[{\"id\":1},{\"id\":2},{\"id\":3}]"}],"isError":false}}`)
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	defer server.Close()
 
-	GitHubMCPURL = server.URL
-	defer func() { GitHubMCPURL = defaultGitHubMCPURL }()
-
+	fetcher := NewGitHubMCPFetcher(server.URL, time.Second)
 	scheme := newScheme()
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	uri := "github://myorg/myrepo"
-	jsonRes, err := FetchGitHubMCP(context.Background(), c, uri)
+	jsonRes, err := fetcher.Fetch(context.Background(), c, uri)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(jsonRes).NotTo(gomega.BeNil())
 
@@ -173,13 +186,11 @@ func TestFetchGitHubMCP_ServerUnreachable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	server.Close()
 
-	GitHubMCPURL = server.URL
-	defer func() { GitHubMCPURL = defaultGitHubMCPURL }()
-
+	fetcher := NewGitHubMCPFetcher(server.URL, time.Second)
 	scheme := newScheme()
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	_, err := FetchGitHubMCP(context.Background(), c, "github://myorg/myrepo/files/main/config.yaml")
+	_, err := fetcher.Fetch(context.Background(), c, "github://myorg/myrepo/files/main/config.yaml")
 	g.Expect(err).To(gomega.HaveOccurred())
 	g.Expect(err.Error()).To(gomega.ContainSubstring("MCP server unreachable"))
 }
@@ -187,10 +198,11 @@ func TestFetchGitHubMCP_ServerUnreachable(t *testing.T) {
 func TestFetchGitHubMCP_InvalidURI(t *testing.T) {
 	g := gomega.NewWithT(t)
 
+	fetcher := NewGitHubMCPFetcher("http://example.com", time.Second)
 	scheme := newScheme()
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	_, err := FetchGitHubMCP(context.Background(), c, "not-a-github-uri")
+	_, err := fetcher.Fetch(context.Background(), c, "not-a-github-uri")
 	g.Expect(err).To(gomega.HaveOccurred())
 	g.Expect(err.Error()).To(gomega.ContainSubstring("invalid GitHub URI"))
 }

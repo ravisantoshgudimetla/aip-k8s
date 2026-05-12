@@ -169,7 +169,12 @@ func GetProjectDir() (string, error) {
 	if err != nil {
 		return wd, fmt.Errorf("failed to get current working directory: %w", err)
 	}
-	wd = strings.ReplaceAll(wd, "/test/e2e", "")
+	// Strip known test subdirectory suffixes to get the project root.
+	// Keeps the function working regardless of whether the test is run
+	// from the project root or from a test subdirectory.
+	for _, suffix := range []string{"/test/e2e_mcp", "/test/e2e"} {
+		wd = strings.ReplaceAll(wd, suffix, "")
+	}
 	return wd, nil
 }
 

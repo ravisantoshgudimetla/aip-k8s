@@ -57,6 +57,9 @@ var (
 		"Maximum time the gateway will poll for AgentRequest resolution before returning 504.")
 	jwtKeyPath = flag.String("jwt-key-path", "",
 		"Path to Ed25519 private key PEM file for JWT signing")
+	jwtKey = flag.String("jwt-key", "",
+		"PEM-encoded Ed25519 private key for JWT signing (alternative to --jwt-key-path). "+
+			"Typically sourced from a K8s Secret via environment variable.")
 )
 
 const defaultKeyWatchInterval = 5 * time.Minute
@@ -116,7 +119,15 @@ func main() {
 	defer stop()
 
 	var jwtMgr *jwt.Manager
-	if *jwtKeyPath != "" {
+	switch {
+	case *jwtKey != "":
+		var err error
+		jwtMgr, err = jwt.NewManagerFromPEM([]byte(*jwtKey), time.Now)
+		if err != nil {
+			log.Fatalf("Failed to parse JWT key from --jwt-key: %v", err)
+		}
+		log.Printf("JWT manager initialized from --jwt-key")
+	case *jwtKeyPath != "":
 		var err error
 		jwtMgr, err = jwt.NewManager(*jwtKeyPath, time.Now)
 		if err != nil {
@@ -124,6 +135,11 @@ func main() {
 		}
 		log.Printf("JWT manager initialized with key: %s", *jwtKeyPath)
 		jwtMgr.StartKeyWatcher(ctx, *jwtKeyPath, defaultKeyWatchInterval, log.Printf)
+	}
+
+	mcpServers, err := loadMCPRegistry()
+	if err != nil {
+		log.Fatalf("Failed to load MCP registry: %v", err)
 	}
 
 	server := &Server{
@@ -137,6 +153,7 @@ func main() {
 		requireGovernedResource: *requireGovernedResourceFlag,
 		jwtManager:              jwtMgr,
 		httpClient:              &http.Client{Timeout: 30 * time.Second},
+		mcpServers:              mcpServers,
 	}
 	mux := http.NewServeMux()
 
@@ -213,7 +230,17 @@ func main() {
 		}
 		authMiddleware(mux).ServeHTTP(w, r)
 	})
-	if err := http.ListenAndServe(*addr, metricsMiddleware(loggingMiddleware(handler))); err != nil {
+	srv := &http.Server{
+		Addr:    *addr,
+		Handler: metricsMiddleware(loggingMiddleware(handler)),
+	}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+	}()
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server failed: %v", err)
 	}
 }

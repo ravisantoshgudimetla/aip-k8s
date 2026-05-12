@@ -56,26 +56,139 @@ and K8s manifests shipped. The old `github_fetcher.go` continued hitting `api.gi
 
 ---
 
-## Phase 4 — Demo Agent (#186) ❌ NOT STARTED
+## Phase 4 — Demo Agent (#186) ⏸️ REDESIGNED
 
-New repo: `agent-control-plane/aip-demo-agent` (Python)
+**Original plan** called for a Python/LangChain agent in a separate repo (`aip-demo-agent`)
+with `nodepool.yaml` scaling. The revised plan below (from `github-mcp-demo.md`) is
+concrete, follows existing Go demo patterns, and targets a two-scenario narrative that
+mirrors the scaledown demo — showing AIP governs both K8s and GitHub surfaces.
 
-**Scenario:** Agent monitors infra config, proposes nodepool scaling change:
-1. Read `nodepool.yaml` from `agent-control-plane/aip-demo-nodepool` repo
-2. Detect: `maxNodes: 5`, propose `8`
-3. Submit intent to AIP gateway: `create_pr` for `github://agent-control-plane/aip-demo-nodepool`
-4. Gateway evaluates SafetyPolicy (max increment, cost threshold, business hours)
-5. Approved → gateway mints JWT
-6. Agent calls `POST /mcp-proxy/github/create_pull_request` with JWT
-7. PR created → human reviews in GitHub UI
+### Scenario
 
-**Files:**
-- `main.py` — LangChain agent with tools: `read_logs`, `read_file`, `create_infrastructure_change`
-- Two modes: `--dry-run` (no GitHub calls), `--live` (real PR, needs PAT in cluster)
-- `requirements.txt` — `langchain`, `requests`
-- `README.md` — step-by-step blog companion (< 30 min follow-along)
+An AI agent monitors `payment-api` and wants to scale it by modifying
+`infra/payment-service.json` in a GitHub repo via a pull request.
 
-**Dependencies:** Requires #183, #185 merged (done) and #184 (partial — fetcher gap resolved in Phase 5 / PR #196). Requires `aip-demo-nodepool` repo created.
+AIP intercepts the intent, reads the current config from GitHub via the
+in-cluster github-mcp-server, evaluates the 90% rule, and either blocks
+or approves. If approved, the agent creates the PR using the MCP proxy
+with a scoped JWT.
+
+Same narrative as the scaledown demo (agent tries to scale something it
+shouldn't) but enforcement at the GitHub PR layer, not inside Kubernetes.
+
+### Config File
+
+Repo: `agent-control-plane/aip-demo-infra` (to be created)
+
+`infra/payment-service.json`:
+```json
+{
+  "service": "payment-api",
+  "maxReplicas": 5,
+  "absoluteMax": 20
+}
+```
+
+### Two-Scenario Flow
+
+**Scenario A — Denied (agent proposes 19 replicas, 95% of absoluteMax):**
+1. Agent submits intent: `targetURI: github://agent-control-plane/aip-demo-infra/files/main/infra/payment-service.json`, `action: create_pr`, `parameters.proposedMaxReplicas: 19`
+2. Controller calls `FetchGitHubMCP` → reads file → gets `absoluteMax: 20`
+3. SafetyPolicy evaluates: `19 / 20 = 0.95 > 0.9` → **DENIED**
+4. No PR created
+
+**Scenario B — Approved (agent proposes 17 replicas, 85% of absoluteMax):**
+1. Agent submits intent: same target, `parameters.proposedMaxReplicas: 17`
+2. Controller fetches file → `17 / 20 = 0.85 <= 0.9` → **APPROVED**
+3. Gateway mints scoped JWT
+4. Agent calls `POST /mcp-proxy/github/create_pull_request` with JWT
+5. Real PR appears on GitHub
+
+Both scenarios run in sequence in a single demo script.
+
+### SafetyPolicy
+
+```yaml
+- name: replica-cap-guard
+  type: StateEvaluation
+  action: Deny
+  message: "Proposed maxReplicas exceeds 90% of absoluteMax. Reduce the request."
+  expression: >
+    has(request.spec.parameters) &&
+    has(request.spec.parameters.proposedMaxReplicas) &&
+    target != null &&
+    has(target.fileContent) &&
+    has(target.fileContent.absoluteMax) &&
+    double(request.spec.parameters.proposedMaxReplicas) / double(target.fileContent.absoluteMax) > 0.9
+```
+
+### Infrastructure
+
+- Kind cluster (no cloud provider needed)
+- AIP gateway + controller + dashboard running locally
+- github-mcp-server deployed in Kind (`ghcr.io/github/github-mcp-server`, pinned tag)
+- One GitHub PAT: read scope for policy evaluation, write scope for PR creation
+- One K8s Secret (`aip-github-token`) — already consumed by github-mcp-server Deployment
+
+### Prerequisites Before Building
+
+1. **Fix YAML-to-JSON gap in `FetchGitHubMCP`** — the fetcher currently
+   falls back to a plain string for non-JSON files. Use JSON for the demo
+   file to sidestep this until the fetcher is fixed.
+
+2. **`agent-control-plane/aip-demo-infra` repo** — needs to be created
+   with `infra/payment-service.json` at the above content.
+
+3. **`parameters` field on `AgentRequest`** — verify the proposed value
+   can be passed via `request.spec.parameters` and is accessible in CEL.
+
+### Files to Create
+
+```
+demo/github/
+  run.sh                        — orchestrates both scenarios
+  agent/main.go                 — ReACT loop agent (Go, like scaledown)
+  k8s/resource.yaml             — GovernedResource (github:// URI pattern)
+  policies/replica-cap-guard.yaml — SafetyPolicy
+  README.md
+```
+
+GovernedResource:
+```yaml
+spec:
+  uriPattern: "github://agent-control-plane/aip-demo-infra/*"
+  permittedActions:
+    - create_pr
+  contextFetcher: github
+```
+
+### e2e Test (separate, gated)
+
+- Build tag: `-tags github_e2e` or env var `GITHUB_E2E=true`
+- Deploys real github-mcp-server in Kind
+- Expects `GITHUB_PAT` env var → creates `aip-github-token` Secret
+- Test A: submit with `proposedMaxReplicas: 19` → assert phase == Denied
+- Test B: submit with `proposedMaxReplicas: 17` → assert phase == Approved → assert PR created on GitHub
+- Cleanup: close PR, reset file to baseline
+
+### Narrative Thread Across Demos
+
+| Demo       | Agent tries to...           | AIP reads...              | Enforcement surface |
+|------------|-----------------------------|---------------------------|---------------------|
+| scaledown  | delete a live K8s service   | live cluster state (k8s)  | Kubernetes          |
+| github     | scale via a GitHub PR       | config file (github MCP)  | GitHub              |
+
+Same agent behaviour, two surfaces — AIP governs the whole system.
+
+### Status
+
+- [ ] `agent-control-plane/aip-demo-infra` repo created
+- [ ] `demo/github/` scaffold
+- [ ] GovernedResource + SafetyPolicy manifests
+- [ ] ReACT loop agent (Go)
+- [ ] `run.sh` (both scenarios, idempotent)
+- [ ] e2e test (gated)
+- [ ] README
 
 ---
 
@@ -150,7 +263,7 @@ clean than retrofit it later.
 |---|---|---|
 | 184 | MCP registry + GitHub MCP integration | ⚠️ Partial — fetcher gap done in Phase 5 |
 | 185 | MCP proxy with JWT validation | ✅ Done |
-| 186 | LangChain demo agent | Phase 4 |
+| 186 | GitHub PR governance demo agent | Phase 4 — redesigned (see demo/github/) |
 | 64  | Capability-based enforcement / scoped tokens | Phase 7 |
 | 118 | GovernedResource binding + enforcement plugins | Phase 7 |
 | 34  | Git repository state context fetcher | Phase 7 |

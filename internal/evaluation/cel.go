@@ -1,7 +1,9 @@
 package evaluation
 
 import (
+	"encoding/json"
 	"fmt"
+	"maps"
 	"sync"
 
 	aipv1alpha1 "github.com/agent-control-plane/aip-k8s/api/v1alpha1"
@@ -39,6 +41,9 @@ func NewCELEnvironment() (*CELEnvironment, error) {
 
 // PrepareVariables transforms the AgentRequest and live TargetContext into a
 // CEL variable map. Both `request` and `target` are available in expressions.
+// When the control plane fetches a ProviderContext (e.g. file contents from a GitHub
+// MCP server), its top-level fields are merged into the `target` variable so that
+// CEL expressions can reference them (e.g. target.fileContent.absoluteMax).
 func (e *CELEnvironment) PrepareVariables(req *aipv1alpha1.AgentRequest, targetCtx *TargetContext) (map[string]any, error) {
 	// Convert object to unstructured to get map[string]any representation
 	unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(req)
@@ -51,6 +56,15 @@ func (e *CELEnvironment) PrepareVariables(req *aipv1alpha1.AgentRequest, targetC
 		targetMap = targetCtx.AsMap()
 	} else {
 		targetMap = (&TargetContext{}).AsMap()
+	}
+
+	// Merge ProviderContext top-level fields into target so that CEL expressions
+	// can reference fetched context like target.fileContent.
+	if req.Status.ProviderContext != nil {
+		var providerCtxMap map[string]any
+		if err := json.Unmarshal(req.Status.ProviderContext.Raw, &providerCtxMap); err == nil {
+			maps.Copy(targetMap, providerCtxMap)
+		}
 	}
 
 	return map[string]any{

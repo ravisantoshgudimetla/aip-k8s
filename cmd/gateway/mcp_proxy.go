@@ -11,42 +11,53 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/agent-control-plane/aip-k8s/internal/jwt"
+	"github.com/agent-control-plane/aip-k8s/internal/mcp"
 )
 
 func (s *Server) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
 	serverName := r.PathValue("server")
 	toolName := r.PathValue("tool")
 
-	if s.jwtManager == nil {
-		writeError(w, http.StatusServiceUnavailable, "JWT signing not configured")
-		return
-	}
-
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") {
-		writeError(w, http.StatusUnauthorized, "missing bearer token")
-		return
-	}
-	token := strings.TrimPrefix(auth, "Bearer ")
-	claims, err := s.jwtManager.ValidateToken(token)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid token: "+err.Error())
-		return
-	}
-
-	mcpServer, err := s.findMCPServer(serverName)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "invalid MCP_REGISTRY: "+err.Error())
-		return
-	}
+	mcpServer := s.findMCPServer(serverName)
 	if mcpServer == nil {
 		writeError(w, http.StatusNotFound, "MCP server not found: "+serverName)
 		return
 	}
 
-	if !s.toolAllowed(mcpServer, toolName, claims.Action) {
-		writeError(w, http.StatusForbidden, "tool not allowed for this action")
+	tool := s.findTool(mcpServer, toolName)
+	if tool == nil {
+		writeError(w, http.StatusNotFound, "tool not found: "+toolName)
 		return
+	}
+
+	var claims *jwt.Claims
+	var agent, action, requestRef string
+	if !tool.ReadOnly {
+		if s.jwtManager == nil {
+			writeError(w, http.StatusServiceUnavailable, "JWT signing not configured")
+			return
+		}
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") {
+			writeError(w, http.StatusUnauthorized, "missing bearer token")
+			return
+		}
+		token := strings.TrimPrefix(auth, "Bearer ")
+		var err error
+		claims, err = s.jwtManager.ValidateToken(token)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "invalid token: "+err.Error())
+			return
+		}
+		if claims.Action != toolName {
+			writeError(w, http.StatusForbidden, "tool not allowed for this action")
+			return
+		}
+		agent = claims.Subject
+		action = claims.Action
+		requestRef = claims.Request
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -56,24 +67,37 @@ func (s *Server) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Bind validated toolName into the request body so the MCP server
-	// receives the correct tool name even if the caller sent a different one.
-	body, err = bindToolName(body, toolName)
+	rpcBody, args, err := buildJSONRPCRequest(body, toolName)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
+	}
+
+	if !tool.ReadOnly {
+		if repoErr := enforceRepoClaim(claims.Repo, args); repoErr != "" {
+			writeError(w, http.StatusForbidden, repoErr)
+			return
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
 	mcpURL := strings.TrimSuffix(mcpServer.URL, "/") + "/tools/call"
-	req, err := http.NewRequestWithContext(ctx, "POST", mcpURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", mcpURL, bytes.NewReader(rpcBody))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create request")
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	bearerToken := mcpServer.BearerToken
+	if bearerToken == "" {
+		bearerToken = os.Getenv("AIP_MCP_TOKEN")
+	}
+	if bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+bearerToken)
+	}
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -88,60 +112,144 @@ func (s *Server) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.emitMCPLog(claims.Subject, serverName, toolName, claims.Action,
-		resp.StatusCode, claims.Request, mcpURL)
+	s.emitMCPLog(agent, serverName, toolName, action, resp.StatusCode, requestRef, mcpURL)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	_, _ = w.Write(respBody)
+	if resp.StatusCode != http.StatusOK {
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("MCP server returned status %d", resp.StatusCode))
+		return
+	}
+
+	result, rpcErr := extractMCPResult(respBody)
+	if rpcErr != "" {
+		writeError(w, http.StatusBadGateway, rpcErr)
+		return
+	}
+
+	if result.IsError {
+		contentStr := "MCP tool returned an error"
+		if len(result.Content) > 0 {
+			var textBlock struct {
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(result.Content[0], &textBlock) == nil && textBlock.Text != "" {
+				contentStr = textBlock.Text
+			}
+		}
+		writeError(w, http.StatusBadGateway, contentStr)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
 }
 
-func (s *Server) findMCPServer(name string) (*MCPServer, error) {
-	registry := os.Getenv("MCP_REGISTRY")
-	if registry == "" {
-		return nil, nil
+// mcpProxyResult is the subset of a JSON-RPC tools/call result returned to callers.
+type mcpProxyResult struct {
+	Content []json.RawMessage `json:"content"`
+	IsError bool              `json:"isError,omitempty"`
+}
+
+// extractMCPResult parses an SSE response body from the MCP server, unwraps the
+// JSON-RPC envelope, and returns the tool result. Returns ("", errMsg) on failure.
+func extractMCPResult(body []byte) (mcpProxyResult, string) {
+	dataLine, err := mcp.ExtractSSEDataLine(body)
+	if err != nil {
+		return mcpProxyResult{}, err.Error()
 	}
-	var servers []MCPServer
-	if err := json.Unmarshal([]byte(registry), &servers); err != nil {
-		return nil, fmt.Errorf("parse MCP_REGISTRY: %w", err)
+
+	var rpc struct {
+		Result *mcpProxyResult `json:"result,omitempty"`
+		Error  *struct {
+			Message string `json:"message"`
+		} `json:"error,omitempty"`
 	}
-	for i := range servers {
-		if servers[i].Name == name {
-			return &servers[i], nil
+	if err := json.Unmarshal([]byte(dataLine), &rpc); err != nil {
+		return mcpProxyResult{}, "MCP server returned invalid JSON-RPC response"
+	}
+	if rpc.Error != nil {
+		return mcpProxyResult{}, "MCP server error: " + rpc.Error.Message
+	}
+	if rpc.Result == nil {
+		return mcpProxyResult{}, "MCP server returned empty result"
+	}
+	return *rpc.Result, ""
+}
+
+// enforceRepoClaim validates that the JWT's Repo claim (a github:// URI)
+// matches the owner and repo arguments in the proxy request body.
+func enforceRepoClaim(claimsRepo string, args map[string]any) string {
+	if claimsRepo == "" {
+		return "token missing repo claim"
+	}
+	claimsRepo = strings.TrimPrefix(claimsRepo, "github://")
+	parts := strings.SplitN(claimsRepo, "/", 3)
+	if len(parts) < 2 {
+		return "token has invalid repo claim"
+	}
+	claimsOwner := parts[0]
+	claimsRepoName := parts[1]
+
+	argOwner, _ := args["owner"].(string)
+	argRepo, _ := args["repo"].(string)
+
+	if argOwner == "" || argRepo == "" {
+		return "request body missing owner or repo arguments"
+	}
+	if argOwner != claimsOwner {
+		return fmt.Sprintf("owner mismatch: token has %q, request has %q", claimsOwner, argOwner)
+	}
+	if argRepo != claimsRepoName {
+		return fmt.Sprintf("repo mismatch: token has %q, request has %q", claimsRepoName, argRepo)
+	}
+	return ""
+}
+
+func (s *Server) findMCPServer(name string) *MCPServer {
+	for i := range s.mcpServers {
+		if s.mcpServers[i].Name == name {
+			return &s.mcpServers[i]
 		}
 	}
-	return nil, nil
+	return nil
 }
 
-func (s *Server) toolAllowed(server *MCPServer, toolName, action string) bool {
+func (s *Server) findTool(server *MCPServer, toolName string) *MCPTool {
 	for _, tool := range server.Tools {
 		if tool.Name == toolName {
-			if tool.ReadOnly {
-				return true
-			}
-			return tool.Name == action
+			return &tool
 		}
 	}
-	return false
+	return nil
 }
 
-// bindToolName injects the validated toolName into the JSON body under the
-// "name" key. It rejects requests where the body already contains a different
-// tool name to prevent parameter mismatches.
-func bindToolName(body []byte, toolName string) ([]byte, error) {
-	var payload map[string]any
-	if len(body) == 0 {
-		payload = map[string]any{"name": toolName}
-		return json.Marshal(payload)
+// buildJSONRPCRequest converts the caller's tool-call body to a JSON-RPC 2.0
+// request suitable for forwarding to the MCP server.
+func buildJSONRPCRequest(body []byte, toolName string) ([]byte, map[string]any, error) {
+	var payload struct {
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if existing, ok := payload["name"].(string); ok && existing != "" && existing != toolName {
-		return nil, fmt.Errorf("tool name mismatch: body has %q, path has %q", existing, toolName)
+	if payload.Name != "" && payload.Name != toolName {
+		return nil, nil, fmt.Errorf("tool name mismatch: body has %q, path has %q", payload.Name, toolName)
 	}
-	payload["name"] = toolName
-	return json.Marshal(payload)
+	payload.Name = toolName
+
+	rpcReq := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      toolName,
+			"arguments": payload.Arguments,
+		},
+	}
+	encoded, err := json.Marshal(rpcReq)
+	if err != nil {
+		return nil, nil, err
+	}
+	return encoded, payload.Arguments, nil
 }
 
 type mcpProxyLog struct {

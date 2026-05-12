@@ -90,6 +90,31 @@ test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expect
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
 
+KIND_CLUSTER_MCP ?= aip-k8s-test-mcp
+
+.PHONY: setup-test-e2e-mcp
+setup-test-e2e-mcp: kubectl ## Set up a Kind cluster for MCP e2e tests if it does not exist
+	@command -v $(KIND) >/dev/null 2>&1 || { \
+		echo "Kind is not installed. Please install Kind manually."; \
+		exit 1; \
+	}
+	@case "$$($(KIND) get clusters)" in \
+		*"$(KIND_CLUSTER_MCP)"*) \
+			echo "Kind cluster '$(KIND_CLUSTER_MCP)' already exists. Skipping creation." ;; \
+		*) \
+			echo "Creating Kind cluster '$(KIND_CLUSTER_MCP)'..."; \
+			$(KIND) create cluster --name $(KIND_CLUSTER_MCP) ;; \
+	esac
+
+.PHONY: test-e2e-mcp
+test-e2e-mcp: setup-test-e2e-mcp manifests generate fmt vet ## Run MCP e2e tests (requires AIP_E2E_GITHUB_PAT env var). Expected an isolated environment using Kind.
+	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER_MCP) AIP_E2E_GITHUB_PAT=$(AIP_E2E_GITHUB_PAT) go test -tags=mcp_e2e ./test/e2e_mcp/ -v -ginkgo.v
+	$(MAKE) cleanup-test-e2e-mcp
+
+.PHONY: cleanup-test-e2e-mcp
+cleanup-test-e2e-mcp: ## Tear down the Kind cluster used for MCP e2e tests
+	@$(KIND) delete cluster --name $(KIND_CLUSTER_MCP)
+
 .PHONY: lint
 lint: golangci-lint helm-crds-check helm-rbac-check ## Run golangci-lint linter and chart sync checks
 	"$(GOLANGCI_LINT)" run

@@ -69,6 +69,7 @@ type Server struct {
 	requireGovernedResource bool
 	jwtManager              *jwt.Manager
 	httpClient              *http.Client
+	mcpServers              []MCPServer
 }
 
 type affectedTargetBody struct {

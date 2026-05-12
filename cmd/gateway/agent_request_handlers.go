@@ -176,8 +176,18 @@ func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request
 			agentReq.Annotations = make(map[string]string)
 		}
 		agentReq.Annotations[v1alpha1.AnnotationGatewayDenied] = v1alpha1.DenialCodeActionNotPermitted
-		if err := s.client.Create(r.Context(), agentReq); err != nil {
-			log.Printf("failed to create gateway-denied AgentRequest for audit trail: %v", err)
+		createErr := s.client.Create(r.Context(), agentReq)
+		if createErr == nil {
+			patchBase := agentReq.DeepCopy()
+			agentReq.Status.GovernedResourceRef = &v1alpha1.GovernedResourceRef{
+				Name:       matchedGR.Name,
+				Generation: matchedGR.Generation,
+			}
+			if patchErr := s.client.Status().Patch(r.Context(), agentReq, client.MergeFrom(patchBase)); patchErr != nil {
+				log.Printf("failed to patch GovernedResourceRef to status for denied request: %v", patchErr)
+			}
+		} else {
+			log.Printf("failed to create gateway-denied AgentRequest for audit trail: %v", createErr)
 		}
 		writeError(w, http.StatusForbidden, v1alpha1.DenialCodeActionNotPermitted)
 		return
@@ -254,6 +264,19 @@ admissionPassed:
 		}
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create AgentRequest: %v", err))
 		return
+	}
+
+	// Mirror GovernedResourceRef to Status for the controller to consume.
+	// This is done after creation since Status is a subresource.
+	if matchedGR != nil {
+		patchBase := agentReq.DeepCopy()
+		agentReq.Status.GovernedResourceRef = &v1alpha1.GovernedResourceRef{
+			Name:       matchedGR.Name,
+			Generation: matchedGR.Generation,
+		}
+		if patchErr := s.client.Status().Patch(r.Context(), agentReq, client.MergeFrom(patchBase)); patchErr != nil {
+			log.Printf("failed to patch GovernedResourceRef to status: %v", patchErr)
+		}
 	}
 
 	if acceptsSSE(r) {

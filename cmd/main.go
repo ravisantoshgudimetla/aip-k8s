@@ -42,6 +42,7 @@ import (
 	governancev1alpha1 "github.com/agent-control-plane/aip-k8s/api/v1alpha1"
 	"github.com/agent-control-plane/aip-k8s/internal/controller"
 	"github.com/agent-control-plane/aip-k8s/internal/evaluation"
+	"github.com/agent-control-plane/aip-k8s/internal/evaluation/fetchers"
 	"github.com/agent-control-plane/aip-k8s/internal/gc"
 	// +kubebuilder:scaffold:imports
 )
@@ -227,6 +228,7 @@ func main() {
 		LockWaitDuration:     *opsLockWaitTimeout,
 		Evaluator:            eval,
 		TargetContextFetcher: &evaluation.KubernetesTargetContextFetcher{Client: mgr.GetAPIReader()},
+		GitHubMCPFetcher:     fetchers.DefaultGitHubMCPFetcher(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "AgentRequest")
 		os.Exit(1)
