@@ -1,0 +1,61 @@
+name: MCP E2E Tests
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'ep/**'
+      - 'docs/**'
+      - '**/*.md'
+  pull_request:
+    paths-ignore:
+      - 'ep/**'
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+    inputs:
+      pat:
+        description: 'GitHub PAT for MCP tests (or use AIP_E2E_GITHUB_PAT secret)'
+        required: false
+
+env:
+  KIND_VERSION: v0.31.0
+
+jobs:
+  test-e2e-mcp:
+    name: MCP E2E on Ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install kind
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-$(go env GOARCH)
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      - name: Verify kind installation
+        run: kind version
+
+      - name: Create Kind cluster
+        run: make setup-test-e2e-mcp
+
+      - name: Build controller image and load into Kind
+        run: |
+          make docker-build IMG=example.com/aip-k8s:v0.0.1
+          kind load docker-image example.com/aip-k8s:v0.0.1 --name aip-k8s-test-mcp
+
+      - name: Running MCP e2e tests
+        run: |
+          go mod tidy
+          make test-e2e-mcp AIP_E2E_GITHUB_PAT=${{ secrets.AIP_E2E_GITHUB_PAT }}
+        env:
+          AIP_E2E_GITHUB_PAT: ${{ secrets.AIP_E2E_GITHUB_PAT }}
+          CERT_MANAGER_INSTALL_SKIP: "true"
