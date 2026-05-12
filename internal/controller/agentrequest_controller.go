@@ -557,7 +557,11 @@ func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, agentReq 
 			agentReq.Status.ProviderContext = providerCtx
 			if patchErr := r.Status().Patch(ctx, agentReq, client.MergeFrom(providerBase)); patchErr != nil {
 				logger.Error(patchErr, "Failed to persist ProviderContext to status")
+				return ctrl.Result{}, patchErr
 			}
+			// Requeue so the next reconcile reads a fresh object with the
+			// persisted ProviderContext before running evaluation.
+			return ctrl.Result{Requeue: true}, nil
 		}
 	}
 

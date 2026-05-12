@@ -22,5 +22,5 @@ func ExtractSSEDataLine(body []byte) (string, error) {
 			return after, nil
 		}
 	}
-	return "", fmt.Errorf("SSE response missing data line in body:\n%s", string(body))
+	return "", fmt.Errorf("SSE response missing data line (body length: %d)", len(body))
 }

@@ -16,6 +16,8 @@ import (
 	"github.com/agent-control-plane/aip-k8s/internal/mcp"
 )
 
+const mcpRequestTimeout = 30 * time.Second
+
 func (s *Server) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
 	serverName := r.PathValue("server")
 	toolName := r.PathValue("tool")
@@ -80,7 +82,7 @@ func (s *Server) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), mcpRequestTimeout)
 	defer cancel()
 
 	mcpURL := strings.TrimSuffix(mcpServer.URL, "/") + "/tools/call"

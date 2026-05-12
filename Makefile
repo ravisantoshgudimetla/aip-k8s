@@ -108,7 +108,7 @@ setup-test-e2e-mcp: kubectl ## Set up a Kind cluster for MCP e2e tests if it doe
 
 .PHONY: test-e2e-mcp
 test-e2e-mcp: setup-test-e2e-mcp manifests generate fmt vet ## Run MCP e2e tests (requires AIP_E2E_GITHUB_PAT env var). Expected an isolated environment using Kind.
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER_MCP) AIP_E2E_GITHUB_PAT=$(AIP_E2E_GITHUB_PAT) go test -tags=mcp_e2e ./test/e2e_mcp/ -v -ginkgo.v
+	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER_MCP) go test -tags=mcp_e2e ./test/e2e_mcp/ -v -ginkgo.v
 	$(MAKE) cleanup-test-e2e-mcp
 
 .PHONY: cleanup-test-e2e-mcp

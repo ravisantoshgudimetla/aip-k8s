@@ -42,9 +42,8 @@ func TestExtractSSEDataLine(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "data prefix without space not matched",
-			body: []byte("data:nospace\n"),
-			// "data:" without the trailing space is not a valid SSE data field
+			name:    "data prefix without space not matched",
+			body:    []byte("data:nospace\n"),
 			wantErr: true,
 		},
 	}

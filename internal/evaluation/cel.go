@@ -62,6 +62,8 @@ func (e *CELEnvironment) PrepareVariables(req *aipv1alpha1.AgentRequest, targetC
 	// can reference fetched context like target.fileContent.
 	if req.Status.ProviderContext != nil {
 		var providerCtxMap map[string]any
+		// Unmarshal errors are intentionally ignored: malformed ProviderContext
+		// is treated as absent so CEL evaluation proceeds with only valid fields.
 		if err := json.Unmarshal(req.Status.ProviderContext.Raw, &providerCtxMap); err == nil {
 			maps.Copy(targetMap, providerCtxMap)
 		}

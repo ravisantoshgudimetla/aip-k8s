@@ -184,7 +184,7 @@ func (s *Server) handleCreateAgentRequest(w http.ResponseWriter, r *http.Request
 				Generation: matchedGR.Generation,
 			}
 			if patchErr := s.client.Status().Patch(r.Context(), agentReq, client.MergeFrom(patchBase)); patchErr != nil {
-				log.Printf("failed to patch GovernedResourceRef to status for denied request: %v", patchErr)
+				log.Printf("Failed to patch GovernedResourceRef to status for denied request: %v", patchErr)
 			}
 		} else {
 			log.Printf("failed to create gateway-denied AgentRequest for audit trail: %v", createErr)
@@ -275,7 +275,7 @@ admissionPassed:
 			Generation: matchedGR.Generation,
 		}
 		if patchErr := s.client.Status().Patch(r.Context(), agentReq, client.MergeFrom(patchBase)); patchErr != nil {
-			log.Printf("failed to patch GovernedResourceRef to status: %v", patchErr)
+			log.Printf("Failed to patch GovernedResourceRef to status: %v", patchErr)
 		}
 	}
 

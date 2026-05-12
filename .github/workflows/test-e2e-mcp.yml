@@ -55,7 +55,8 @@ jobs:
       - name: Running MCP e2e tests
         run: |
           go mod tidy
-          make test-e2e-mcp AIP_E2E_GITHUB_PAT=${{ secrets.AIP_E2E_GITHUB_PAT }}
+          make test-e2e-mcp
         env:
           AIP_E2E_GITHUB_PAT: ${{ secrets.AIP_E2E_GITHUB_PAT }}
+          GH_TOKEN: ${{ secrets.AIP_E2E_GITHUB_PAT }}
           CERT_MANAGER_INSTALL_SKIP: "true"

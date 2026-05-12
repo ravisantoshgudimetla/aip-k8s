@@ -90,7 +90,7 @@ func kubectlApply(stdin string) error {
 }
 
 func kubectlDelete(manifest string) error {
-	cmd := exec.Command("kubectl", "delete", "-f", "-", "--ignore-not-found")
+	cmd := exec.Command("kubectl", "delete", "-f", "-", "--ignore-not-found", "--wait=false")
 	cmd.Stdin = strings.NewReader(manifest)
 	_, err := runCmd(cmd)
 	return err
@@ -228,7 +228,8 @@ var _ = BeforeSuite(func() {
 	patchJSON := fmt.Sprintf(`{"spec":{"template":{"spec":{"containers":[{"name":"manager","env":[{"name":"AIP_MCP_TOKEN","valueFrom":{"secretKeyRef":{"name":"%s","key":"token"}}}]}]}}}}`, githubTokenSecret)
 	cmd = exec.Command("kubectl", "patch", "deployment", controllerDeployment, "-n", namespace,
 		"--type=strategic", "-p", patchJSON)
-	_, _ = runCmd(cmd)
+	_, err = runCmd(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to patch controller deployment with AIP_MCP_TOKEN")
 
 	By("deploying github-mcp-server into aip-k8s-system namespace")
 	cmd = exec.Command("kubectl", "apply", "-f", filepath.Join(projDir, "config", "mcp"))
@@ -297,11 +298,11 @@ var _ = BeforeSuite(func() {
 
 var _ = AfterSuite(func() {
 	By("cleaning up github-mcp-server resources")
-	cmd := exec.Command("kubectl", "delete", "-f", filepath.Join(getProjectDir(), "config", "mcp"), "--ignore-not-found")
+	cmd := exec.Command("kubectl", "delete", "-f", filepath.Join(getProjectDir(), "config", "mcp"), "--ignore-not-found", "--wait=false")
 	_, _ = runCmd(cmd)
 
 	By("deleting aip-github-token Secret")
-	cmd = exec.Command("kubectl", "delete", "secret", githubTokenSecret, "-n", namespace, "--ignore-not-found")
+	cmd = exec.Command("kubectl", "delete", "secret", githubTokenSecret, "-n", namespace, "--ignore-not-found", "--wait=false")
 	_, _ = runCmd(cmd)
 
 	if mcpPFCmd != nil && mcpPFCmd.Process != nil {

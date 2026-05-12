@@ -144,7 +144,7 @@ Both scenarios run in sequence in a single demo script.
 
 ### Files to Create
 
-```
+```text
 demo/github/
   run.sh                        — orchestrates both scenarios
   agent/main.go                 — ReACT loop agent (Go, like scaledown)
@@ -164,9 +164,9 @@ spec:
 
 ### e2e Test (separate, gated)
 
-- Build tag: `-tags github_e2e` or env var `GITHUB_E2E=true`
+- Build tag: `-tags mcp_e2e`
 - Deploys real github-mcp-server in Kind
-- Expects `GITHUB_PAT` env var → creates `aip-github-token` Secret
+- Expects `AIP_E2E_GITHUB_PAT` env var → creates `aip-github-token` Secret
 - Test A: submit with `proposedMaxReplicas: 19` → assert phase == Denied
 - Test B: submit with `proposedMaxReplicas: 17` → assert phase == Approved → assert PR created on GitHub
 - Cleanup: close PR, reset file to baseline
