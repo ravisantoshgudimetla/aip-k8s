@@ -176,9 +176,10 @@ func ensureBranchLifecycle(branchName, dummyPrefix string) {
 var _ = BeforeSuite(func() {
 	projDir := getProjectDir()
 
+	var cmd *exec.Cmd
 	if os.Getenv("GATEWAY_URL") == "" && os.Getenv("SKIP_DEPLOY") == "" {
 		By("building gateway binary")
-		cmd := exec.Command("go", "build", "-o", filepath.Join(projDir, "bin", "gateway"), "./cmd/gateway")
+		cmd = exec.Command("go", "build", "-o", filepath.Join(projDir, "bin", "gateway"), "./cmd/gateway")
 		_, err := runCmd(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to build gateway binary")
 
