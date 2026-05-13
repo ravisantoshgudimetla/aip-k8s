@@ -477,7 +477,7 @@ for the AIP JWT — the `Authorization` header is exclusively used by the OIDC m
 
 Both `/mcp-proxy` and `POST /mcp` share the same outer auth layer:
 
-```
+```text
 Client → POST /mcp-proxy/{server}/{tool}   OR   POST /mcp
          └── authMiddleware (main mux)
              ├── authRequired=false → pass through (local dev, no OIDC configured)

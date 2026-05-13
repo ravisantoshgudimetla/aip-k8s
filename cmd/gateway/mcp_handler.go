@@ -140,6 +140,9 @@ func (s *Server) handleToolsCall(w http.ResponseWriter, r *http.Request, req *mc
 			}
 			return
 		}
+	} else {
+		agent = callerSubFromCtx(r.Context())
+		action = toolName
 	}
 
 	result, errMsg := s.forwardToolCall(r.Context(), mcpServer, params.Arguments, toolName, req.ID)

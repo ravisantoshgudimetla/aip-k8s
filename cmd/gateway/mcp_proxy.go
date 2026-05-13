@@ -55,6 +55,9 @@ func (s *Server) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
+	} else {
+		agent = callerSubFromCtx(r.Context())
+		action = toolName
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)

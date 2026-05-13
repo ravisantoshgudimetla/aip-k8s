@@ -156,6 +156,8 @@ func ensureBranchLifecycle(branchName, dummyPrefix string) {
 			closePR := exec.Command("gh", "api", "--method", "PATCH",
 				fmt.Sprintf("repos/%s/%s/pulls/%s", githubOwner, githubRepo, prNum),
 				"-f", "state=closed")
+			// Safe to ignore: best-effort cleanup of stale PRs from prior runs.
+			// The e2e branches are deleted in AfterSuite regardless.
 			_, _ = runCmd(closePR)
 		}
 	}
@@ -327,6 +329,7 @@ var _ = AfterSuite(func() {
 
 	if os.Getenv(githubPATEnv) != "" {
 		By("deleting e2e test branches from GitHub (auto-closes any open PRs)")
+		// Safe to ignore: test infra cleanup; failures don't affect test results.
 		cmd = exec.Command("gh", "api", "--method", "DELETE",
 			fmt.Sprintf("repos/%s/%s/git/refs/heads/%s", githubOwner, githubRepo, e2eTestBranch))
 		_, _ = runCmd(cmd)
